@@ -76,7 +76,7 @@ float total_acceleration=9.81f;
 float offset_acceleration[3]={0.0f,0.0f,0.0f};
 float offset_omega[3]={0.0f,0.0f,0.0f};
 
-KalmanFilter filter1,filter2,filter3,filter4,filter5,filter6,filter7;
+KalmanFilter filter1,filter2,filter3,filter4,filter5,filter6,filter7,filter8;
 
 float A_rot=1.0f; //factor of real value to previous real value
 float B_rot=0.0f; //factor of real value to real control signal
@@ -97,10 +97,18 @@ float x_pos=0.0f; // zacetni vrednosti
 float A_yaw=1.0f; //factor of real value to previous real value
 float B_yaw=0.0f; //factor of real value to real control signal
 float H_yaw=1.0f; // sprememba merjene vrednosti zaradi enote/drugo
-float Q_yaw=5.0f; // Process noise (wind/driver input)
-float R_yaw=50.0f; //sensor inaccuracy. more=more innacurate
+float Q_yaw=0.05f; // Process noise (wind/driver input)
+float R_yaw=10.0f; //sensor inaccuracy. more=more innacurate
 float P_yaw=0.0f; // zacetni vrednosti
 float x_yaw=0.0f; // zacetni vrednosti
+
+float A_mag_rot_vel=1.0f; //factor of real value to previous real value
+float B_mag_rot_vel=0.0f; //factor of real value to real control signal
+float H_mag_rot_vel=1.0f; // sprememba merjene vrednosti zaradi enote/drugo
+float Q_mag_rot_vel=1.0f; // Process noise (wind/driver input)
+float R_mag_rot_vel=1000.0f; //sensor inaccuracy. more=more innacurate
+float P_mag_rot_vel=0.0f; // zacetni vrednosti
+float x_mag_rot_vel=0.0f; // zacetni vrednosti
 
 PID_regulator pid1,pid2,pid3,pid4,pid5,pid6;
 
@@ -152,7 +160,6 @@ void setup()
 
 	// IMU stuff
 	mpu.begin();
-	
 
 	mpu.setAccelerometerRange(MPU6050_RANGE_8_G); // 2,4,8,16
 	//mpu.getAccelerometerRange()
@@ -168,7 +175,8 @@ void setup()
 	filter4.change_parameters(A_rot,H_rot,Q_rot,R_rot,P_rot,x_rot);
 	filter5.change_parameters(A_rot,H_rot,Q_rot,R_rot,P_rot,x_rot);
 	filter6.change_parameters(A_rot,H_rot,Q_rot,R_rot,P_rot,x_rot);
-	filter7.change_parameters(A_yaw,H_yaw,Q_yaw,R_yaw,P_yaw,x_yaw);
+	//filter7.change_parameters(A_yaw,H_yaw,Q_yaw,R_yaw,P_yaw,x_yaw);
+	filter8.change_parameters(A_mag_rot_vel,H_mag_rot_vel,Q_mag_rot_vel,R_mag_rot_vel,P_mag_rot_vel,x_mag_rot_vel);
 
 
 	// set up PIDs
@@ -508,7 +516,7 @@ void get_magnetometer_data() {
 	//Read data from each axis, 2 registers per axis
 	myWire.requestFrom(0x0D, 6);
 	if(6<=myWire.available()){
-		mag_x = myWire.read() | myWire.read()<<8; // msb (lsb shifted 8), then lsb
+		mag_x = myWire.read() | myWire.read()<<8; // lsb, then msb
 		mag_y = myWire.read() | myWire.read()<<8; 
 		mag_z = myWire.read() | myWire.read()<<8;
 	}
@@ -522,23 +530,26 @@ void get_magnetometer_data() {
 		mag_azimuth_old=mag_azimuth;
 		rotational_velocity = 0;
 		first_magnetometer_update=0;
+
 	} else {
+
 		mag_azimuth = azimuth(mag_y,mag_x);
-		mag_azimuth = filter7.Output(mag_azimuth);
+
 		if ((mag_azimuth-mag_azimuth_old) > 270) {
-			// verjetno je šlo za obrat v levo, ne za 270 v desno
-			rotational_velocity = (mag_azimuth-360.0-mag_azimuth_old)/timer_magnetometer;
+			// verjetno je šlo za obrat v levo čez sredino
+			mag_azimuth_old += 360;
+
 		} else if (mag_azimuth-mag_azimuth_old < -270) {
-			// verjetno je šlo za obrat v desno, ne za 270 v levo
-			rotational_velocity = (mag_azimuth+360.0-mag_azimuth_old)/timer_magnetometer;
-		} else {
-			rotational_velocity = (mag_azimuth-mag_azimuth_old)/timer_magnetometer;
+			// verjetno je šlo za obrat v desno prek sredine			
+			mag_azimuth_old -= 360;
 		}
+
+		rotational_velocity = (mag_azimuth-mag_azimuth_old)/timer_magnetometer;
+		rotational_velocity=filter8.Output(rotational_velocity);
+
 		mag_azimuth_old = mag_azimuth;
+		
 	}
-	
-	
-	
 }
 
 
@@ -651,29 +662,25 @@ void print_pwm_data() {
 void print_propeller_thrust_data() {
 	Serial.print(F("F1m:"));
 	Serial.print(F1m);
-	Serial.print(F(","));
-	Serial.print(F("F2m:"));
+	Serial.print(F(",F2m:"));
 	Serial.print(F2m);
-	Serial.print(F(","));
-	Serial.print(F("F3m:"));
+	Serial.print(F(",F3m:"));
 	Serial.print(F3m);
-	Serial.print(F(","));
-	Serial.print(F("F4m:"));
+	Serial.print(F(",F4m:"));
 	Serial.print(F4m);
 	Serial.print(F(","));
 }
 
 
 void print_magnetometer_data() {
-	Serial.print(F("x:"));
-	Serial.print(mag_x);
-	Serial.print(F(",y:"));
-	Serial.print(mag_y);
-	Serial.print(F(",z:"));
-	Serial.print(mag_z);
-	Serial.print(F(",a: "));
+	//Serial.print(F("x:"));
+	//Serial.print(mag_x);
+	//Serial.print(F(",y:"));
+	//Serial.print(mag_y);
+	//Serial.print(F(",z:"));
+	//Serial.print(mag_z);
+	Serial.print(F("a: "));
 	Serial.print(mag_azimuth);
-	Serial.print(F(","));
 	Serial.print(F(",rot_mag: "));
 	Serial.print(rotational_velocity);
 	Serial.print(F(","));
