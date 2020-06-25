@@ -98,7 +98,7 @@ float A_yaw=1.0f; //factor of real value to previous real value
 float B_yaw=0.0f; //factor of real value to real control signal
 float H_yaw=1.0f; // sprememba merjene vrednosti zaradi enote/drugo
 float Q_yaw=5.0f; // Process noise (wind/driver input)
-float R_yaw=10.0f; //sensor inaccuracy. more=more innacurate
+float R_yaw=50.0f; //sensor inaccuracy. more=more innacurate
 float P_yaw=0.0f; // zacetni vrednosti
 float x_yaw=0.0f; // zacetni vrednosti
 
@@ -168,7 +168,8 @@ void setup()
 	filter4.change_parameters(A_rot,H_rot,Q_rot,R_rot,P_rot,x_rot);
 	filter5.change_parameters(A_rot,H_rot,Q_rot,R_rot,P_rot,x_rot);
 	filter6.change_parameters(A_rot,H_rot,Q_rot,R_rot,P_rot,x_rot);
-	filter7.change_parameters(A_rot,H_rot,Q_rot,R_rot,P_rot,x_rot);
+	filter7.change_parameters(A_yaw,H_yaw,Q_yaw,R_yaw,P_yaw,x_yaw);
+
 
 	// set up PIDs
 	pid1.set_parameters(Kp,Ki,Kd);
@@ -229,8 +230,8 @@ void do_critical_work() {
 
 	timer_magnetometer+=dt;
 	if (timer_magnetometer >= 0.02) { // in seconds
-		timer_magnetometer=0;
 		get_magnetometer_data();
+		timer_magnetometer=0;
 	}
 
 	//Serial.print(F("dt"));
@@ -508,8 +509,8 @@ void get_magnetometer_data() {
 	myWire.requestFrom(0x0D, 6);
 	if(6<=myWire.available()){
 		mag_x = myWire.read() | myWire.read()<<8; // msb (lsb shifted 8), then lsb
-		mag_z = myWire.read() | myWire.read()<<8; 
-		mag_y = myWire.read() | myWire.read()<<8;
+		mag_y = myWire.read() | myWire.read()<<8; 
+		mag_z = myWire.read() | myWire.read()<<8;
 	}
 
 	if (mag_x == -1 || mag_y == -1 || mag_z == -1) {
@@ -519,35 +520,34 @@ void get_magnetometer_data() {
 	if (first_magnetometer_update) {
 		mag_azimuth = azimuth(mag_y,mag_x);
 		mag_azimuth_old=mag_azimuth;
+		rotational_velocity = 0;
 		first_magnetometer_update=0;
 	} else {
-		mag_azimuth = azimuth(mag_x,mag_y);
+		mag_azimuth = azimuth(mag_y,mag_x);
+		mag_azimuth = filter7.Output(mag_azimuth);
+		if ((mag_azimuth-mag_azimuth_old) > 270) {
+			// verjetno je šlo za obrat v levo, ne za 270 v desno
+			rotational_velocity = (mag_azimuth-360.0-mag_azimuth_old)/timer_magnetometer;
+		} else if (mag_azimuth-mag_azimuth_old < -270) {
+			// verjetno je šlo za obrat v desno, ne za 270 v levo
+			rotational_velocity = (mag_azimuth+360.0-mag_azimuth_old)/timer_magnetometer;
+		} else {
+			rotational_velocity = (mag_azimuth-mag_azimuth_old)/timer_magnetometer;
+		}
+		mag_azimuth_old = mag_azimuth;
 	}
 	
-	if ((mag_azimuth-mag_azimuth_old) > 270) {
-		// verjetno je šlo za obrat v levo, ne za 270 v desno
-		rotational_velocity = (mag_azimuth-360.0-mag_azimuth_old)/timer_magnetometer;
-	} else if (mag_azimuth-mag_azimuth_old < -270) {
-		// verjetno je šlo za obrat v desno, ne za 270 v levo
-		rotational_velocity = (mag_azimuth+360.0-mag_azimuth_old)/timer_magnetometer;
-	} else {
-		rotational_velocity = (mag_azimuth-mag_azimuth_old)/timer_magnetometer;
-	}
-	mag_azimuth_old = mag_azimuth;
-	//rotational_velocity = filter7.Output(rotational_velocity);
+	
+	
 }
 
 
 
-float azimuth(int x, int y){
-  float azimuth = atan2(-(int)x,(int)y) * 180.0/PI;
-  if (azimuth < 0) {
-  	azimuth += 360;
-  }
-  if (azimuth > 360) {
-  	azimuth -= 360;
-  }
+float azimuth(int a, int b){
+  float azimuth = atan2((int)a,(int)b) * 180.0/PI;
+  return azimuth < 0?360 + azimuth:azimuth;
 }
+
 
 
 void print_omega_data() {
