@@ -156,8 +156,6 @@ void setup()
 	dt=0.0001f;
 	time_elapsed=0;
 
-	//timer_magnetometer=0.0f;
-
 	// IMU stuff
 	mpu.begin();
 
@@ -525,15 +523,15 @@ void get_magnetometer_data() {
 		return;
 	}
 
+	mag_azimuth = azimuth(-mag_y,mag_x);
+
 	if (first_magnetometer_update) {
-		mag_azimuth = azimuth(mag_y,mag_x);
+		
 		mag_azimuth_old=mag_azimuth;
 		rotational_velocity = 0;
 		first_magnetometer_update=0;
 
 	} else {
-
-		mag_azimuth = azimuth(mag_y,mag_x);
 
 		if ((mag_azimuth-mag_azimuth_old) > 270) {
 			// verjetno je šlo za obrat v levo čez sredino
@@ -564,11 +562,9 @@ float azimuth(int a, int b){
 void print_omega_data() {
 	Serial.print(F("OmgX:"));
 	Serial.print(omega[0]);
-	Serial.print(F(","));
-	Serial.print(F("OmgY:"));
+	Serial.print(F(",OmgY:"));
 	Serial.print(omega[1]);
-	Serial.print(F(","));
-	Serial.print(F("OmgZ:"));
+	Serial.print(F(",OmgZ:"));
 	Serial.print(omega[2]);
 	Serial.print(F(","));
 }
@@ -576,11 +572,9 @@ void print_omega_data() {
 void print_acc_data() {
 	Serial.print(F("AccX:"));
 	Serial.print(acceleration[0]);
-	Serial.print(F(","));
-	Serial.print(F("AccY:"));
+	Serial.print(F(",AccY:"));
 	Serial.print(acceleration[1]);
-	Serial.print(F(","));
-	Serial.print(F("AccZ:"));
+	Serial.print(F(",AccZ:"));
 	Serial.print(acceleration[2]);
 	Serial.print(F(","));
 }
@@ -588,11 +582,9 @@ void print_acc_data() {
 void print_raw_acc_data() {
 	Serial.print(F("AccRawX:"));
 	Serial.print(a.acceleration.x);
-	Serial.print(F(","));
-	Serial.print(F("AccRawY:"));
+	Serial.print(F(",AccRawY:"));
 	Serial.print(a.acceleration.y);
-	Serial.print(F(","));
-	Serial.print(F("AccRawZ:"));
+	Serial.print(F(",AccRawZ:"));
 	Serial.print(a.acceleration.z);
 	Serial.print(F(","));
 }
@@ -613,20 +605,15 @@ void print_rc_data() {
 void print_gps_data() {
 	Serial.print(F("LAT:"));
     Serial.print(flat);
-    Serial.print(F(","));
-    Serial.print(F("LON:"));
+    Serial.print(F(",LON:"));
     Serial.print(flon);
-    Serial.print(F(","));
-    Serial.print(F("DIR:"));
+    Serial.print(F(",DIR:"));
     Serial.print(gps_direction);
-    Serial.print(F(","));
-    Serial.print(F("SPD:"));
+    Serial.print(F(",SPD:"));
     Serial.print(gps_speed);
-    Serial.print(F(","));
-    //Serial.print(F("ALT:"));
+    //Serial.print(F(",ALT:"));
     //Serial.print(gps_elevation);
-    //Serial.print(F(","));
-    Serial.print(F("FIX:"));
+    Serial.print(F(",FIX:"));
     Serial.print(gps_fix);
     Serial.print(F(","));
 
@@ -635,11 +622,9 @@ void print_gps_data() {
 void print_rot_data() {
 	Serial.print(F("AngX:"));
 	Serial.print(angle_deg[0]);
-	Serial.print(F(","));
-	Serial.print(F("AngY:"));
+	Serial.print(F(",AngY:"));
 	Serial.print(angle_deg[1]);
-	Serial.print(F(","));
-	Serial.print(F("AngZ:"));
+	Serial.print(F(",AngZ:"));
 	Serial.print(angle_deg[2]);
 	Serial.print(F(","));
 }
@@ -647,14 +632,11 @@ void print_rot_data() {
 void print_pwm_data() {
 	Serial.print(F("pwm_1:"));
 	Serial.print(pwm_1);
-	Serial.print(F(","));
-	Serial.print(F("pwm_2:"));
+	Serial.print(F(",pwm_2:"));
 	Serial.print(pwm_2);
-	Serial.print(F(","));
-	Serial.print(F("pwm_3:"));
+	Serial.print(F(",pwm_3:"));
 	Serial.print(pwm_3);
-	Serial.print(F(","));
-	Serial.print(F("pwm_4:"));
+	Serial.print(F(",pwm_4:"));
 	Serial.print(pwm_4);
 	Serial.print(F(","));
 }
