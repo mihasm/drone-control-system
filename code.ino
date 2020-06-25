@@ -7,7 +7,34 @@
 #include <Adafruit_MPU6050.h>
 #include <Adafruit_Sensor.h>
 #include <NeoSWSerial.h>
+#include <SoftwareWire.h>
 
+//Magnetometer stuff
+SoftwareWire myWire( 10, 8);
+
+#define address 0x0D
+
+#define Mode_Standby    0b00000000
+#define Mode_Continuous 0b00000001
+
+#define ODR_10Hz        0b00000000
+#define ODR_50Hz        0b00000100
+#define ODR_100Hz       0b00001000
+#define ODR_200Hz       0b00001100
+
+#define RNG_2G          0b00000000
+#define RNG_8G          0b00010000
+
+#define OSR_512         0b00000000
+#define OSR_256         0b01000000
+#define OSR_128         0b10000000
+#define OSR_64          0b11000000
+
+int mag_x,mag_y,mag_z;
+float mag_azimuth,mag_azimuth_old,rotational_velocity;
+bool update_magnetometer_rotational_speed,first_magnetometer_update, update_magnetometer;
+
+// MPU stuff
 Adafruit_MPU6050 mpu;
 
 // RC stuff
@@ -22,8 +49,8 @@ float roll_rc=0.5;
 float yaw_rc=0.5;
 
 // time variables
-long time_start,time_now,time_elapsed;
-float dt;
+long time_start,time_now,time_prev,time_elapsed;
+float dt,timer_magnetometer;
 
 // GPS stuff
 TinyGPS gps;
@@ -49,7 +76,7 @@ float total_acceleration=9.81f;
 float offset_acceleration[3]={0.0f,0.0f,0.0f};
 float offset_omega[3]={0.0f,0.0f,0.0f};
 
-KalmanFilter filter1,filter2,filter3,filter4,filter5,filter6;
+KalmanFilter filter1,filter2,filter3,filter4,filter5,filter6,filter7;
 
 float A_rot=1.0f; //factor of real value to previous real value
 float B_rot=0.0f; //factor of real value to real control signal
@@ -67,6 +94,14 @@ float R_pos=10.0f; //sensor inaccuracy. more=more innacurate
 float P_pos=0.0f; // zacetni vrednosti
 float x_pos=0.0f; // zacetni vrednosti
 
+float A_yaw=1.0f; //factor of real value to previous real value
+float B_yaw=0.0f; //factor of real value to real control signal
+float H_yaw=1.0f; // sprememba merjene vrednosti zaradi enote/drugo
+float Q_yaw=5.0f; // Process noise (wind/driver input)
+float R_yaw=10.0f; //sensor inaccuracy. more=more innacurate
+float P_yaw=0.0f; // zacetni vrednosti
+float x_yaw=0.0f; // zacetni vrednosti
+
 PID_regulator pid1,pid2,pid3,pid4,pid5,pid6;
 
 float Kp=5.0f; //translational speed control
@@ -74,11 +109,11 @@ float Ki=8.0f;
 float Kd=0.0f;
 float Kp_r=0.1f; // rotational speed control
 float Ki_r=0.0f;
-float Kd_r=0.03f;
+float Kd_r=0.001f;
 float Kp5=0.5f; // thrust control
 float Ki5=0.2f;
 float Kd5=0.0f;
-float Kp6=0.05f; // yaw control
+float Kp6=0.001f; // yaw control
 float Ki6=0.0f;
 float Kd6=0.0f;
 
@@ -102,34 +137,30 @@ int pwm_1,pwm_2,pwm_3,pwm_4;
 
 void setup()
 {
-	Serial.begin(115200);
+	Serial.begin(74880);
 	Serial.setTimeout(150);
-
-	while(!Serial) {
-		delay(10);
-	}
 	
 	ss.begin(9600); // set baudrate in u-center software, use drivers for GT-U7 (Neo 6M)
-	
-	Serial.println("Drone is starting up...");
+	delay(100);
+	Serial.write("Starting drone!\n");
 
 	time_start=micros();
-	dt=0.0001;
+	dt=0.0001f;
 	time_elapsed=0;
 
-	// IMU stuff
-	Serial.println("Adafruit MPU6050 test!");
-	mpu.begin();
-	delay(100);
+	//timer_magnetometer=0.0f;
 
-	Serial.println("MPU6050 Found!");
+	// IMU stuff
+	mpu.begin();
+	
+
 	mpu.setAccelerometerRange(MPU6050_RANGE_8_G); // 2,4,8,16
 	//mpu.getAccelerometerRange()
 	mpu.setGyroRange(MPU6050_RANGE_500_DEG); //250,500,1000,2000
 	//mpu.getGyroRange()
 	mpu.setFilterBandwidth(MPU6050_BAND_21_HZ); // 5,10,21,44,94,184,260 Hz
 	//mpu.getFilterBandwidth()
-
+	
 	// set up kalman filters
 	filter1.change_parameters(A_pos,H_pos,Q_pos,R_pos,P_pos,x_pos);
 	filter2.change_parameters(A_pos,H_pos,Q_pos,R_pos,P_pos,x_pos);
@@ -137,6 +168,7 @@ void setup()
 	filter4.change_parameters(A_rot,H_rot,Q_rot,R_rot,P_rot,x_rot);
 	filter5.change_parameters(A_rot,H_rot,Q_rot,R_rot,P_rot,x_rot);
 	filter6.change_parameters(A_rot,H_rot,Q_rot,R_rot,P_rot,x_rot);
+	filter7.change_parameters(A_rot,H_rot,Q_rot,R_rot,P_rot,x_rot);
 
 	// set up PIDs
 	pid1.set_parameters(Kp,Ki,Kd);
@@ -160,23 +192,6 @@ void setup()
 	output5=0;
 	output6=0;
 
-	/*
-	Serial.println("Calibrationg IMU...");
-	for (int i=0; i<100; i++) {
-		mpu.getEvent(&a, &g, &temp);
-		delay(10);
-	}
-	Serial.println("Getting offset...");
-	get_offset(0.0f,0.0f,-9.81f);
-	Serial.println("Offsets:");
-	Serial.print(offset_acceleration[0]);
-	Serial.print(",");
-	Serial.print(offset_acceleration[1]);
-	Serial.print(",");
-	Serial.print(offset_acceleration[2]);
-	Serial.println(",");
-	*/
-
 	offset_acceleration[0]=0.15f;
 	offset_acceleration[1]=-0.23f;
 	offset_acceleration[2]=-0.92f;
@@ -187,11 +202,15 @@ void setup()
 
 	pinMode(PIN_RECEIVER, INPUT);
 	
+	
 	for (int i=0;i<channumber;i++) {
 		channel_norm[i]=-1.0f;
 	}
+
+	init_magnetometer();
+	first_magnetometer_update=true;
 	
-	Serial.println("Initialization complete, starting loop...");
+	//Serial.write("Initialization complete, starting loop!\n");
 }
 
 void loop() {
@@ -202,6 +221,66 @@ void loop() {
 		do_critical_work();
 		do_non_critical_work();
 	}
+}
+
+void do_critical_work() {
+
+	get_time();
+
+	timer_magnetometer+=dt;
+	if (timer_magnetometer >= 0.02) { // in seconds
+		timer_magnetometer=0;
+		get_magnetometer_data();
+	}
+
+	//Serial.print(F("dt"));
+	//Serial.print(dt,6);
+	//Serial.println(F(","));
+
+	get_imu_data();
+	apply_kalman_filters();
+	get_rc_data();
+	calculate_PIDs();
+	//print_pwm_data();
+	//print_rot_data();
+	//print_propeller_thrust_data();
+	
+	print_magnetometer_data();
+	Serial.println(F(""));
+
+	get_serial_commands();
+}
+
+void do_non_critical_work() {
+	
+	//Serial.print(F("total_a:"));
+	//Serial.print(total_acceleration);
+	//Serial.print(F(","));
+	//print_omega_data();
+	//print_raw_acc_data();
+	//print_acc_data();
+	//print_rot_data();
+	//print_gps_data();
+	//print_rc_data();
+
+	Serial.println("");
+}
+
+void calibrate_IMU() {
+	Serial.println(F("Calibrationg IMU..."));
+	for (int i=0; i<100; i++) {
+		mpu.getEvent(&a, &g, &temp);
+		delay(10);
+	}
+	Serial.println(F("Getting offset..."));
+	get_offset(0.0f,0.0f,-9.81f);
+	Serial.println(F("Offsets:"));
+	Serial.print(offset_acceleration[0]);
+	Serial.print(F(","));
+	Serial.print(offset_acceleration[1]);
+	Serial.print(F(","));
+	Serial.print(offset_acceleration[2]);
+	Serial.println(F(","));
 }
 
 void parse_gps_string_and_do_critical_work() {
@@ -218,52 +297,29 @@ void parse_gps_string_and_do_critical_work() {
 
 		//get fix info
 		if (age == TinyGPS::GPS_INVALID_AGE) {
-			//Serial.println("No fix detected");
+			//Serial.println(F("No fix detected"));
 			gps_fix=false;
 		} else if (age > 2000) {
-			//Serial.println("Warning: possible stale data!");
+			//Serial.println(F("Warning: possible stale data!"));
 			gps_fix=false;
 		} else {
 			gps_fix=true;
-			//Serial.println("Data is current.");
+			//Serial.println(F("Data is current."));
 		}
 	} // Did a new valid sentence come in?
 }
 
-void do_critical_work() {
-	time_now=micros();
-	dt = (time_now - time_elapsed)*1e-6; //s
-	time_elapsed=time_now-time_start;
 
-	//Serial.print("dt");
-	//Serial.print(dt,6);
-	//Serial.println(",");
 
-	get_imu_data();
-	apply_kalman_filters();
-	get_rc_data();
-	calculate_PIDs();
-	//print_pwm_data();
-	//print_rot_data();
-	print_propeller_thrust_data();
-	Serial.println("");
-
-	get_serial_commands();
+void magDataReady() {
+	update_magnetometer=true;
 }
 
-void do_non_critical_work() {
-	
-	//Serial.print("total_a:");
-	//Serial.print(total_acceleration);
-	//Serial.print(",");
-	//print_omega_data();
-	//print_raw_acc_data();
-	//print_acc_data();
-	//print_rot_data();
-	//print_gps_data();
-	//print_rc_data();
-
-	Serial.println("");
+void get_time() {
+	time_now=micros();
+	time_elapsed=time_now-time_start;
+	dt = (time_now - time_prev)*1e-6; //s
+	time_prev=time_now;
 }
 
 void calculate_PIDs() {
@@ -300,9 +356,11 @@ void calculate_PIDs() {
 		//output5 = pid5.Output(speed[1],desired_value5,dt);
 		output5=thrust_rc;
 
+		desired_value6=15*(yaw_rc-0.5);
+
 		// PID 6 yaw
-		//output6 = pid6.Output(r2d(omega[2]),desired_value6,dt);
-		output6=0;
+		output6 = pid6.Output(rotational_velocity,desired_value6,dt);
+		
 
 		F1m=(+output3-output4 +output5 -output6); // Force magnitude
 		F2m=(-output3-output4 +output5 +output6);
@@ -313,6 +371,10 @@ void calculate_PIDs() {
 		if (F2m > 1.0f) F2m=1.0f; else if (F2m < 0.0f) F2m=0.0f;
 		if (F3m > 1.0f) F3m=1.0f; else if (F3m < 0.0f) F3m=0.0f;
 		if (F4m > 1.0f) F4m=1.0f; else if (F4m < 0.0f) F4m=0.0f;
+
+		if (!remote_turned_on) {
+			F1m=0;F2m=0;F3m=0;F4m=0;
+		}
 
 		pwm_1=(int)(F1m*255.0f);
 		pwm_2=(int)(F2m*255.0f);
@@ -375,118 +437,6 @@ void apply_kalman_filters() {
 	omega[2] = filter6.Output(omega[2]);
 }
 
-void print_omega_data() {
-	Serial.print("OmgX:");
-	Serial.print(omega[0]);
-	Serial.print(",");
-	Serial.print("OmgY:");
-	Serial.print(omega[1]);
-	Serial.print(",");
-	Serial.print("OmgZ:");
-	Serial.print(omega[2]);
-	Serial.print(",");
-}
-
-void print_acc_data() {
-	Serial.print("AccX:");
-	Serial.print(acceleration[0]);
-	Serial.print(",");
-	Serial.print("AccY:");
-	Serial.print(acceleration[1]);
-	Serial.print(",");
-	Serial.print("AccZ:");
-	Serial.print(acceleration[2]);
-	Serial.print(",");
-}
-
-void print_raw_acc_data() {
-	Serial.print("AccRawX:");
-	Serial.print(a.acceleration.x);
-	Serial.print(",");
-	Serial.print("AccRawY:");
-	Serial.print(a.acceleration.y);
-	Serial.print(",");
-	Serial.print("AccRawZ:");
-	Serial.print(a.acceleration.z);
-	Serial.print(",");
-}
-
-void print_rc_data() {
-	for (int i=0; i<(channumber); i++) {
-		Serial.print("RC");
-		Serial.print(i+1);
-		Serial.print(":");
-		Serial.print(channel_norm[i]);
-		Serial.print(",");
-	}
-	Serial.print("REMOTE:");
-	Serial.print(remote_turned_on);
-	Serial.print(",");
-}
-
-void print_gps_data() {
-	Serial.print("LAT:");
-    Serial.print(flat);
-    Serial.print(",");
-    Serial.print("LON:");
-    Serial.print(flon);
-    Serial.print(",");
-    Serial.print("DIR:");
-    Serial.print(gps_direction);
-    Serial.print(",");
-    Serial.print("SPD:");
-    Serial.print(gps_speed);
-    Serial.print(",");
-    //Serial.print("ALT:");
-    //Serial.print(gps_elevation);
-    //Serial.print(",");
-    Serial.print("FIX:");
-    Serial.print(gps_fix);
-    Serial.print(",");
-
-}
-
-void print_rot_data() {
-	Serial.print("AngX:");
-	Serial.print(angle_deg[0]);
-	Serial.print(",");
-	Serial.print("AngY:");
-	Serial.print(angle_deg[1]);
-	Serial.print(",");
-	Serial.print("AngZ:");
-	Serial.print(angle_deg[2]);
-	Serial.print(",");
-}
-
-void print_pwm_data() {
-	Serial.print("pwm_1:");
-	Serial.print(pwm_1);
-	Serial.print(",");
-	Serial.print("pwm_2:");
-	Serial.print(pwm_2);
-	Serial.print(",");
-	Serial.print("pwm_3:");
-	Serial.print(pwm_3);
-	Serial.print(",");
-	Serial.print("pwm_4:");
-	Serial.print(pwm_4);
-	Serial.print(",");
-}
-
-void print_propeller_thrust_data() {
-	Serial.print("F1m:");
-	Serial.print(F1m);
-	Serial.print(",");
-	Serial.print("F2m:");
-	Serial.print(F2m);
-	Serial.print(",");
-	Serial.print("F3m:");
-	Serial.print(F3m);
-	Serial.print(",");
-	Serial.print("F4m:");
-	Serial.print(F4m);
-	Serial.print(",");
-}
 
 void get_rc_data() {
 	for (int channel = 1; channel <= channumber; ++channel) {
@@ -524,4 +474,207 @@ static float wrap(float angle)
 	while (angle > +180) angle -= 360;
 	while (angle < -180) angle += 360;
 	return angle;
+}
+
+
+void init_magnetometer() {
+	myWire.begin();
+
+	//initialization
+	myWire.beginTransmission(address);
+	myWire.write(0x0B);
+	myWire.write(0x01);
+	myWire.endTransmission();
+
+	//set mode
+	myWire.beginTransmission(address);
+	myWire.write(0x09);
+	myWire.write(Mode_Continuous|ODR_200Hz|RNG_2G|OSR_256);
+	myWire.endTransmission();
+}
+
+void get_magnetometer_data() {
+	//Serial.println(F("getting magnetometer data..."));
+
+	//Tell the HMC5883L where to begin reading data
+	myWire.beginTransmission(address);
+	myWire.write(0x0); // dunno why 0x03...
+	int err = myWire.endTransmission();
+	delay(5);
+
+  	if (err) {return;}
+
+	//Read data from each axis, 2 registers per axis
+	myWire.requestFrom(0x0D, 6);
+	if(6<=myWire.available()){
+		mag_x = myWire.read() | myWire.read()<<8; // msb (lsb shifted 8), then lsb
+		mag_z = myWire.read() | myWire.read()<<8; 
+		mag_y = myWire.read() | myWire.read()<<8;
+	}
+
+	if (mag_x == -1 || mag_y == -1 || mag_z == -1) {
+		return;
+	}
+
+	if (first_magnetometer_update) {
+		mag_azimuth = azimuth(mag_y,mag_x);
+		mag_azimuth_old=mag_azimuth;
+		first_magnetometer_update=0;
+	} else {
+		mag_azimuth = azimuth(mag_x,mag_y);
+	}
+	
+	if ((mag_azimuth-mag_azimuth_old) > 270) {
+		// verjetno je šlo za obrat v levo, ne za 270 v desno
+		rotational_velocity = (mag_azimuth-360.0-mag_azimuth_old)/timer_magnetometer;
+	} else if (mag_azimuth-mag_azimuth_old < -270) {
+		// verjetno je šlo za obrat v desno, ne za 270 v levo
+		rotational_velocity = (mag_azimuth+360.0-mag_azimuth_old)/timer_magnetometer;
+	} else {
+		rotational_velocity = (mag_azimuth-mag_azimuth_old)/timer_magnetometer;
+	}
+	mag_azimuth_old = mag_azimuth;
+	//rotational_velocity = filter7.Output(rotational_velocity);
+}
+
+
+
+float azimuth(int x, int y){
+  float azimuth = atan2(-(int)x,(int)y) * 180.0/PI;
+  if (azimuth < 0) {
+  	azimuth += 360;
+  }
+  if (azimuth > 360) {
+  	azimuth -= 360;
+  }
+}
+
+
+void print_omega_data() {
+	Serial.print(F("OmgX:"));
+	Serial.print(omega[0]);
+	Serial.print(F(","));
+	Serial.print(F("OmgY:"));
+	Serial.print(omega[1]);
+	Serial.print(F(","));
+	Serial.print(F("OmgZ:"));
+	Serial.print(omega[2]);
+	Serial.print(F(","));
+}
+
+void print_acc_data() {
+	Serial.print(F("AccX:"));
+	Serial.print(acceleration[0]);
+	Serial.print(F(","));
+	Serial.print(F("AccY:"));
+	Serial.print(acceleration[1]);
+	Serial.print(F(","));
+	Serial.print(F("AccZ:"));
+	Serial.print(acceleration[2]);
+	Serial.print(F(","));
+}
+
+void print_raw_acc_data() {
+	Serial.print(F("AccRawX:"));
+	Serial.print(a.acceleration.x);
+	Serial.print(F(","));
+	Serial.print(F("AccRawY:"));
+	Serial.print(a.acceleration.y);
+	Serial.print(F(","));
+	Serial.print(F("AccRawZ:"));
+	Serial.print(a.acceleration.z);
+	Serial.print(F(","));
+}
+
+void print_rc_data() {
+	for (int i=0; i<(channumber); i++) {
+		Serial.print(F("RC"));
+		Serial.print(i+1);
+		Serial.print(F(":"));
+		Serial.print(channel_norm[i]);
+		Serial.print(F(","));
+	}
+	Serial.print(F("REMOTE:"));
+	Serial.print(remote_turned_on);
+	Serial.print(F(","));
+}
+
+void print_gps_data() {
+	Serial.print(F("LAT:"));
+    Serial.print(flat);
+    Serial.print(F(","));
+    Serial.print(F("LON:"));
+    Serial.print(flon);
+    Serial.print(F(","));
+    Serial.print(F("DIR:"));
+    Serial.print(gps_direction);
+    Serial.print(F(","));
+    Serial.print(F("SPD:"));
+    Serial.print(gps_speed);
+    Serial.print(F(","));
+    //Serial.print(F("ALT:"));
+    //Serial.print(gps_elevation);
+    //Serial.print(F(","));
+    Serial.print(F("FIX:"));
+    Serial.print(gps_fix);
+    Serial.print(F(","));
+
+}
+
+void print_rot_data() {
+	Serial.print(F("AngX:"));
+	Serial.print(angle_deg[0]);
+	Serial.print(F(","));
+	Serial.print(F("AngY:"));
+	Serial.print(angle_deg[1]);
+	Serial.print(F(","));
+	Serial.print(F("AngZ:"));
+	Serial.print(angle_deg[2]);
+	Serial.print(F(","));
+}
+
+void print_pwm_data() {
+	Serial.print(F("pwm_1:"));
+	Serial.print(pwm_1);
+	Serial.print(F(","));
+	Serial.print(F("pwm_2:"));
+	Serial.print(pwm_2);
+	Serial.print(F(","));
+	Serial.print(F("pwm_3:"));
+	Serial.print(pwm_3);
+	Serial.print(F(","));
+	Serial.print(F("pwm_4:"));
+	Serial.print(pwm_4);
+	Serial.print(F(","));
+}
+
+void print_propeller_thrust_data() {
+	Serial.print(F("F1m:"));
+	Serial.print(F1m);
+	Serial.print(F(","));
+	Serial.print(F("F2m:"));
+	Serial.print(F2m);
+	Serial.print(F(","));
+	Serial.print(F("F3m:"));
+	Serial.print(F3m);
+	Serial.print(F(","));
+	Serial.print(F("F4m:"));
+	Serial.print(F4m);
+	Serial.print(F(","));
+}
+
+
+void print_magnetometer_data() {
+	Serial.print(F("x:"));
+	Serial.print(mag_x);
+	Serial.print(F(",y:"));
+	Serial.print(mag_y);
+	Serial.print(F(",z:"));
+	Serial.print(mag_z);
+	Serial.print(F(",a: "));
+	Serial.print(mag_azimuth);
+	Serial.print(F(","));
+	Serial.print(F(",rot_mag: "));
+	Serial.print(rotational_velocity);
+	Serial.print(F(","));
 }
