@@ -8,7 +8,8 @@
 #include <Adafruit_Sensor.h>
 #include <NeoSWSerial.h>
 #include <SoftwareWire.h>
-
+#include <InterruptHandler.h>
+/*
 // Magnetometer stuff
 SoftwareWire myWire(10, 8);
 
@@ -32,13 +33,14 @@ SoftwareWire myWire(10, 8);
 
 int mag_x, mag_y, mag_z, mag_x_new, mag_y_new, mag_z_new;
 float mag_azimuth;
+*/
 
 // MPU stuff
 Adafruit_MPU6050 mpu;
 
 // RC stuff
 #define kChannelNumber 6  // Number of channels
-float channel_norm[kChannelNumber];
+float channel_norm[12];
 int PIN_RECEIVER = 3;  // rc receiver PPM pin
 PPMReader ppm(PIN_RECEIVER, kChannelNumber);
 bool remote_turned_on = false;
@@ -46,7 +48,7 @@ float thrust_rc = 0;
 float pitch_rc = 0.5;
 float roll_rc = 0.5;
 float yaw_rc = 0.5;
-unsigned long value;
+unsigned long value_channel;
 
 // time variables
 long time_start, time_now, time_prev, time_elapsed;
@@ -145,12 +147,12 @@ float F1m, F2m, F3m, F4m;
 int pwm_1, pwm_2, pwm_3, pwm_4;
 
 void setup() {
-    Serial.begin(74880);
+    Serial.begin(115200);
     Serial.setTimeout(150);
 
     ss.begin(9600);  // set baudrate in u-center software, use drivers for GT-U7 (Neo 6M)
     delay(100);
-    Serial.write("Starting drone!\n");
+    Serial.print(F("Initializing drone..."));
 
     time_start = micros();
     dt = 0.0001f;
@@ -207,15 +209,13 @@ void setup() {
     offset_omega[1]=-0.02f;
     offset_omega[2]=-0.01f;
 
-    pinMode(PIN_RECEIVER, INPUT);
-
     for (int i = 0; i < kChannelNumber; i++) {
         channel_norm[i]=-1.0f;
     }
 
-    init_magnetometer();
+    //init_magnetometer();
 
-    // Serial.write("Initialization complete, starting loop!\n");
+    Serial.print(F("Initialization complete, starting loop..."));
 }
 
 void loop() {
@@ -230,12 +230,13 @@ void loop() {
 
 void do_critical_work() {
     get_time();
-
+/*
     timer_magnetometer+=dt;
-    if (timer_magnetometer > 0.005) {  // in seconds
+    if (timer_magnetometer > 0.02) {  // in seconds
         get_magnetometer_data();
         timer_magnetometer = 0;
     }
+*/
 
     // Serial.print(F("dt"));
     // Serial.print(dt,6);
@@ -250,7 +251,7 @@ void do_critical_work() {
     // print_rot_data();
     // print_propeller_thrust_data();
 
-    print_magnetometer_data();
+    //print_magnetometer_data();
     Serial.println(F(""));
 
     get_serial_commands();
@@ -347,11 +348,9 @@ void calculate_PIDs() {
 
     // PID 3 levo desno roll
     output3 = pid3.Output(angle[0], desired_value3, dt);
-    output3 = 0;
 
     // PID 4 naprej nazaj pitch
     output4 = pid4.Output(angle[1], desired_value4, dt);
-    output4 = 0;
 
     // PID 5 thrust (gor dol)
     // output5 = pid5.Output(speed[1],desired_value5,dt);
@@ -438,9 +437,9 @@ void apply_kalman_filters() {
 
 
 void get_rc_data() {
-    for (int channel = 1; channel <= kChannelNumber; ++channel) {
-        value = ppm.latestValidChannelValue(channel, 0);
-        channel_norm[channel-1] = ((float)value-1000.0f)/10.0f/100.0f;
+    for (int channel = 0; channel < kChannelNumber; channel++) {
+        value_channel = ppm.rawChannelValue(channel+1);
+        channel_norm[channel] = ((float)value_channel - 1000)/1000;
     }
 
     if (!remote_turned_on) {
@@ -474,33 +473,34 @@ static float wrap(float angle) {
     return angle;
 }
 
-
+/*
 void init_magnetometer() {
     myWire.begin();
+    delay(50);
 
     // initialization
     myWire.beginTransmission(address);
     myWire.write(0x0B);
     myWire.write(0x01);
     myWire.endTransmission();
+    delay(50);
 
     // set mode
     myWire.beginTransmission(address);
     myWire.write(0x09);
     myWire.write(Mode_Continuous|ODR_200Hz|RNG_2G|OSR_256);
     myWire.endTransmission();
+    delay(50);
 }
 
 void get_magnetometer_data() {
-    // Serial.println(F("getting magnetometer data..."));
 
     // Tell the HMC5883L where to begin reading data
     myWire.beginTransmission(address);
     myWire.write(0x0);  // dunno why 0x03...
-    int err = myWire.endTransmission();
+    myWire.endTransmission();
     delay(5);
-
-    if (err) {return;}
+    //ppm.detach();
 
     // Read data from each axis, 2 registers per axis
     myWire.requestFrom(0x0D, 6);
@@ -510,6 +510,7 @@ void get_magnetometer_data() {
         mag_z_new = myWire.read() | myWire.read() << 8;
     }
     myWire.endTransmission();
+    //ppm.attach();
 
     if (mag_x_new != -1 && mag_y_new != -1 && mag_z_new != -1) {
         mag_x = mag_x_new;
@@ -526,7 +527,7 @@ float azimuth(int a, int b) {
     return azimuth < 0?360 + azimuth:azimuth;
 }
 
-
+*/
 
 void print_omega_data() {
     Serial.print(F("OmgX:"));
@@ -621,7 +622,7 @@ void print_propeller_thrust_data() {
     Serial.print(F(","));
 }
 
-
+/*
 void print_magnetometer_data() {
     Serial.print(F("x:"));
     Serial.print(mag_x);
@@ -633,3 +634,4 @@ void print_magnetometer_data() {
     Serial.print(mag_azimuth);
     Serial.print(F(","));
 }
+*/
