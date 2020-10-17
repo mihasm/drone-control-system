@@ -9,16 +9,27 @@ void PID_regulator::set_parameters(float Kp, float Ki, float Kd, float bias1) {
 	this->Kp=Kp;
 	this->Ki=Ki;
 	this->Kd=Kd;
-	this->bias1=bias1;
+	this->bias=bias;
+	this->error=0.0f;
+	this->integral=0.0f;
+	this->output=0.0f;
+	this->integral_prior=0.0f;
+	this->error_prior=0.0f;
 }
 
-float PID_regulator::Output(float input, float desired_value1, float dt) {
-	actual_value1=input;
-	error1=desired_value1-actual_value1;
-	integral1=integral_prior1+error1*dt;
-	derivative1=(error1-error_prior1)/dt;
-	output1=(Kp*error1+Ki*integral1+Kd*derivative1+bias1);
-	error_prior1=error1;
-	integral_prior1=integral1;
-	return output1;
+float PID_regulator::Output(float input, float desired_value, float dt) {
+	actual_value=input;
+	error=desired_value-actual_value;
+	integral=integral_prior+error*dt;
+	derivative=(error-error_prior)/dt;
+	output=(Kp*error+Ki*integral+Kd*derivative+bias);
+	error_prior=error;
+	integral_prior=integral;
+	return output;
+}
+
+void PID_regulator::ResetOutput() {
+	this->error=0.0f;
+	this->integral=0.0f;
+	this->output=0.0f;
 }
