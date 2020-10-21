@@ -40,8 +40,10 @@ float yaw_rc = 0.5;
 unsigned long value_channel;
 
 // time variables
-unsigned long time_start, time_now, time_prev, time_elapsed;
-float dt, timer_magnetometer;
+unsigned long time_start, time_now, time_prev;
+float dt;
+unsigned long time_now_pres, time_prev_pres;
+float dt_pres;
 
 // set up main data arrays
 float acceleration[3];  // m/s^2
@@ -90,21 +92,21 @@ KalmanFilter filter1, filter2, filter3, filter4,
 #define  Q_temp   0.05   // Process noise (wind/driver input)
 #define  R_temp   0.1   // sensor inaccuracy. more = more innacurate
 #define  P_temp   0.0   // zacetni vrednosti
-#define  x_temp   0.0   // zacetni vrednosti
+#define  x_temp   20.0   // zacetni vrednosti
 
 #define  A_press   1.0   // factor of real value to previous real value
 #define  B_press   0.0   // factor of real value to real control signal
 #define  H_press   1.0   // sprememba merjene vrednosti zaradi enote/drugo
-#define  Q_press   0.01   // Process noise (wind/driver input)
-#define  R_press   0.01   // sensor inaccuracy. more = more innacurate
+#define  Q_press   0.02   // Process noise (wind/driver input)
+#define  R_press   5   // sensor inaccuracy. more = more innacurate
 #define  P_press   0.0   // zacetni vrednosti
-#define  x_press   10.0   // zacetni vrednosti
+#define  x_press   1000.0   // zacetni vrednosti
 
 #define  A_vert   1.0   // factor of real value to previous real value
 #define  B_vert   0.0   // factor of real value to real control signal
 #define  H_vert   1.0   // sprememba merjene vrednosti zaradi enote/drugo
-#define  Q_vert   0.1   // Process noise (wind/driver input)
-#define  R_vert   5   // sensor inaccuracy. more = more innacurate
+#define  Q_vert   0.05   // Process noise (wind/driver input)
+#define  R_vert   15.0   // sensor inaccuracy. more = more innacurate
 #define  P_vert   0.0   // zacetni vrednosti
 #define  x_vert   0.0   // zacetni vrednosti
 
@@ -251,7 +253,6 @@ void setup() {
 
     time_start = micros();
     time_prev = time_start;
-    time_elapsed = 0;
 }
 
 void loop() {
@@ -272,9 +273,9 @@ void loop() {
     //print_pwm_data();
     //print_pid_data();
     //print_raw_acc_data();
-    print_pressure_data();
+    //print_pressure_data();
     //print_angle_rad();
-    //print_vertical_speed();
+    print_vertical_speed();
 
     //get_serial_commands();
     Serial.println("");
@@ -304,9 +305,14 @@ void calibrate_IMU() {
 
 void get_time() {
     time_now = micros();
-    time_elapsed = time_now-time_start;
     dt = (time_now - time_prev)*1e-6;  // s
     time_prev = time_now;
+}
+
+void get_time_pressure() {
+    time_now_pres = micros();
+    dt_pres = (micros() - time_prev_pres)*1e-6;  // s
+    time_prev_pres = time_now_pres;
 }
 
 
@@ -425,20 +431,19 @@ void get_imu_data() {
     omega[2] = filter6.Output(omega[2]);
 
     vertical_acceleration_imu =  -(acceleration[2]*cos(angle[0])*cos(angle[1]) - acceleration[0]*sin(angle[1]) - acceleration[1]*cos(angle[1])*sin(angle[0])+9.82f);
-    vertical_speed_imu = (0.7f*vertical_speed_imu+0.3f*vertical_speed) + vertical_acceleration_imu*dt;
+    vertical_speed_imu = (0.4f*vertical_speed+0.6f*vertical_speed_imu) + vertical_acceleration_imu*dt;
+    vertical_speed = 0.05f*vertical_speed_BMP+0.95f*vertical_speed_imu;
 }
 
 void get_pressure_data() {
     if (bmp280.getTempPres(temperature_BMP, pressure)) {
-        //pressure = filter9.Output(pressure);
-        altitude_BMP = (pow(1013.25e5/(pressure*1e5),1/5.257)-1)*(temperature+273.15)/0.0065;
-        //altitude_BMP = filter7.Output(altitude_BMP);
     }
+    pressure = filter9.Output(pressure);
+    altitude_BMP = (pow(1013.25e5/(pressure*1e5),1/5.257)-1)*(temperature+273.15)/0.0065;
+    altitude_BMP = filter7.Output(altitude_BMP);
     vertical_speed_BMP = (altitude_BMP - altitude_BMP_prev)/dt; // m/s
     vertical_speed_BMP = filter10.Output(vertical_speed_BMP);
     altitude_BMP_prev = altitude_BMP;
-
-    vertical_speed = 0.05f*vertical_speed_BMP+0.95f*vertical_speed_imu;
 }
 
 void apply_pwm_to_propellers() {
