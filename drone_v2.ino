@@ -5,7 +5,7 @@
 #include <Servo.h>
 #include "MPU9250.h"
 #include <Wire.h>
-#include <BMx280I2C.h>
+#include <BMP280_DEV.h>
 
 const char comma[] PROGMEM = {","};  // use this form
 
@@ -15,9 +15,11 @@ const char comma[] PROGMEM = {","};  // use this form
 // MPU9250 I2C init
 MPU9250 IMU(Wire, MPU9250_I2C_ADDRESS);
 int status_IMU;
+float temperature, altitude_BMP, altitude_BMP_prev, vertical_speed_BMP, altitude_calc_prev;
 
 // BMP280 I2C init
-BMx280I2C bmx280(BMP280_I2C_ADDRESS);
+float temperature_BMP, pressure;            // Create the temperature, pressure and altitude variables
+BMP280_DEV bmp280;                                // Instantiate (create) a BMP280_DEV object and set-up for I2C operation
 
 // Servo stuff
 Servo ESC_Servo_1, ESC_Servo_2, ESC_Servo_3, ESC_Servo_4;
@@ -27,15 +29,14 @@ int offset_servo1, offset_servo2, offset_servo3, offset_servo4;
 // RC stuff
 #define kChannelNumber 6  // Number of channels
 float channel_norm[12];
-#define PIN_RECEIVER 4  // rc receiver PPM pin
+#define PIN_RECEIVER 2  // rc receiver PPM pin
 PPMReader ppm(PIN_RECEIVER, kChannelNumber);
-bool remote_turned_on = false;
 bool remote_armed = false;
+int remote_status = -2;
 float thrust_rc = 0;
 float pitch_rc = 0.5;
 float roll_rc = 0.5;
 float yaw_rc = 0.5;
-float turnon_rc = 0.0;
 unsigned long value_channel;
 
 // time variables
@@ -49,12 +50,15 @@ float angle[3];  // rads
 float angle_deg[3];  // degs
 float omega[3];  // rad/s
 float speed[3] = {0.0f, 0.0f, 0.0f};  // m/s
+float vertical_acceleration_imu;
+float vertical_speed;
+float vertical_speed_imu;
 
 float offset_acceleration[3] = {0.0f, 0.0f, 0.0f};
 float offset_omega[3] = {0.0f, 0.0f, 0.0f};
 
 KalmanFilter filter1, filter2, filter3, filter4,
-             filter5, filter6, filter7, filter8;
+             filter5, filter6, filter7, filter8, filter9, filter10;
 
 #define  A_rot   1.0   // factor of real value to previous real value
 #define  B_rot   0.0   // factor of real value to real control signal
@@ -64,22 +68,55 @@ KalmanFilter filter1, filter2, filter3, filter4,
 #define  P_rot   0.0   // zacetni vrednosti
 #define  x_rot   0.0   // zacetni vrednosti
 
-#define  A_pos   1.0   // factor of real value to previous real value
-#define  B_pos   0.0   // factor of real value to real control signal
-#define  H_pos   1.0   // sprememba merjene vrednosti zaradi enote/drugo
-#define  Q_pos   5.0   // Process noise (wind/driver input)
-#define  R_pos   10.0   // sensor inaccuracy. more = more innacurate
-#define  P_pos   0.0   // zacetni vrednosti
-#define  x_pos   0.0   // zacetni vrednosti
+#define  A_degrees   1.0   // factor of real value to previous real value
+#define  B_degrees   0.0   // factor of real value to real control signal
+#define  H_degrees   1.0   // sprememba merjene vrednosti zaradi enote/drugo
+#define  Q_degrees   5.0   // Process noise (wind/driver input)
+#define  R_degrees   10.0   // sensor inaccuracy. more = more innacurate
+#define  P_degrees   0.0   // zacetni vrednosti
+#define  x_degrees   0.0   // zacetni vrednosti
+
+#define  A_height   1.0   // factor of real value to previous real value
+#define  B_height   0.0   // factor of real value to real control signal
+#define  H_height   1.0   // sprememba merjene vrednosti zaradi enote/drugo
+#define  Q_height   0.01   // Process noise (wind/driver input)
+#define  R_height   0.5   // sensor inaccuracy. more = more innacurate
+#define  P_height   0.0   // zacetni vrednosti
+#define  x_height   0.0   // zacetni vrednosti
+
+#define  A_temp   1.0   // factor of real value to previous real value
+#define  B_temp   0.0   // factor of real value to real control signal
+#define  H_temp   1.0   // sprememba merjene vrednosti zaradi enote/drugo
+#define  Q_temp   0.05   // Process noise (wind/driver input)
+#define  R_temp   0.1   // sensor inaccuracy. more = more innacurate
+#define  P_temp   0.0   // zacetni vrednosti
+#define  x_temp   0.0   // zacetni vrednosti
+
+#define  A_press   1.0   // factor of real value to previous real value
+#define  B_press   0.0   // factor of real value to real control signal
+#define  H_press   1.0   // sprememba merjene vrednosti zaradi enote/drugo
+#define  Q_press   0.01   // Process noise (wind/driver input)
+#define  R_press   0.01   // sensor inaccuracy. more = more innacurate
+#define  P_press   0.0   // zacetni vrednosti
+#define  x_press   10.0   // zacetni vrednosti
+
+#define  A_vert   1.0   // factor of real value to previous real value
+#define  B_vert   0.0   // factor of real value to real control signal
+#define  H_vert   1.0   // sprememba merjene vrednosti zaradi enote/drugo
+#define  Q_vert   0.1   // Process noise (wind/driver input)
+#define  R_vert   5   // sensor inaccuracy. more = more innacurate
+#define  P_vert   0.0   // zacetni vrednosti
+#define  x_vert   0.0   // zacetni vrednosti
 
 PID_regulator pid1, pid2, pid3, pid4, pid6;
+bool stop_integration_3, stop_integration_4;
 
 #define  Kp   0.02  // PID 2 (omega)
 #define  Ki   0.0
 #define  Kd   0.0
 
 #define  Kp_r   2.0   // PID 1 (stopinje)
-#define  Ki_r   500.0
+#define  Ki_r   2.0
 #define  Kd_r   0.0
 
 #define  Kp_6   0.0   // PID 3 - yaw (stopinje)
@@ -87,6 +124,8 @@ PID_regulator pid1, pid2, pid3, pid4, pid6;
 #define  Kd_6   0.0
 
 #define CALIBRATION_ITERATIONS 100
+
+#define MAX_DEGREES 45.0
 
 float desired_value1;
 float output1;
@@ -117,7 +156,7 @@ void setup() {
     Serial.begin(115200);
     Serial.setTimeout(150);
     while (!Serial) {}
-    Serial.print(F("Init..."));
+    Serial.print(F("Init...\n"));
 
     offset_servo1 = 0;
     offset_servo2 = 0;
@@ -125,36 +164,49 @@ void setup() {
     offset_servo4 = 0;
 
     // IMU
-    status_IMU = IMU.begin();
-    if (status_IMU < 0) {
-        Serial.println("IMU initialization failed!");
-        while (1) {}
+    Serial.print("Initializing IMU");
+    for (int i=0; i < 100; i++) {
+        Serial.print(".");
+        status_IMU = IMU.begin();  // if  < 0 not initialized
+        if (status_IMU == 1) {
+            Serial.print("!");
+            break;
+        }
+        delay(100);
     }
+    if (status_IMU < 0) {
+        Serial.print("IMU initialization failed!");
+        while (1) {};
+    }
+
     IMU.setAccelRange(MPU9250::ACCEL_RANGE_8G);
     IMU.setGyroRange(MPU9250::GYRO_RANGE_500DPS);
     IMU.setDlpfBandwidth(MPU9250::DLPF_BANDWIDTH_20HZ);
     // setting SRD to 19 for a 50 Hz update rate
     IMU.setSrd(19);
 
-    if (!bmx280.begin()) {
-        Serial.println("BMP280 initialization failed!");
-        while (1) {}
-    }
+    if (!bmp280.begin(BMP280_I2C_ALT_ADDR)) {
+        Serial.print("BMP initialization failed!");
+        while (1) {};
+    }              // Default initialisation with alternative I2C address (0x76), place the BMP280 into SLEEP_MODE 
+    bmp280.setPresOversampling(OVERSAMPLING_X1);    // Set the pressure oversampling to X4
+    bmp280.setTempOversampling(OVERSAMPLING_SKIP);    // Set the temperature oversampling to X1
+    bmp280.setIIRFilter(IIR_FILTER_OFF);              // Set the IIR filter to setting 4
+    bmp280.setTimeStandby(TIME_STANDBY_05MS);     // Set the standby time to 2 seconds
+    bmp280.startNormalConversion();                 // Start BMP280 continuous conversion in NORMAL_MODE
 
-    // BMP 280
-    bmx280.resetToDefaults();
-    bmx280.writeOversamplingPressure(BMx280MI::OSRS_P_x16);
-    bmx280.writeOversamplingTemperature(BMx280MI::OSRS_T_x16);
-    if (bmx280.isBME280())
-    bmx280.writeOversamplingHumidity(BMx280MI::OSRS_H_x16);
 
     // set up kalman filters
-    filter1.change_parameters(A_pos, H_pos, Q_pos, R_pos, P_pos, x_pos);
-    filter2.change_parameters(A_pos, H_pos, Q_pos, R_pos, P_pos, x_pos);
-    filter3.change_parameters(A_pos, H_pos, Q_pos, R_pos, P_pos, x_pos);
+    filter1.change_parameters(A_degrees, H_degrees, Q_degrees, R_degrees, P_degrees, x_degrees);
+    filter2.change_parameters(A_degrees, H_degrees, Q_degrees, R_degrees, P_degrees, x_degrees);
+    filter3.change_parameters(A_degrees, H_degrees, Q_degrees, R_degrees, P_degrees, x_degrees);
     filter4.change_parameters(A_rot, H_rot, Q_rot, R_rot, P_rot, x_rot);
     filter5.change_parameters(A_rot, H_rot, Q_rot, R_rot, P_rot, x_rot);
     filter6.change_parameters(A_rot, H_rot, Q_rot, R_rot, P_rot, x_rot);
+    filter7.change_parameters(A_height, H_height, Q_height, R_height, P_height, x_height);
+    filter8.change_parameters(A_temp, H_temp, Q_temp, R_temp, P_temp, x_temp);
+    filter9.change_parameters(A_press, H_press, Q_press, R_press, P_press, x_press);
+    filter10.change_parameters(A_vert, H_vert, Q_vert, R_vert, P_vert, x_vert);
 
     // set up PIDs
     pid1.set_parameters(Kp, Ki, Kd);
@@ -186,8 +238,16 @@ void setup() {
     // offset_omega[2]=-0.01f;
 
     calibrate_IMU();
-    channel_norm[0]=-1.0f;
-    // Serial.print(F("Initialization complete, starting loop...\n"));
+
+    /*
+    // WAIT FOR TRANSMITTER
+    Serial.print(F("Waiting for transmitter... "));
+    while (get_rc_status() != 1) {
+        get_rc_data();
+        delay(100);
+    }
+    Serial.print(F("Transmitter detected, starting loop!\n"));
+    */
 
     time_start = micros();
     time_prev = time_start;
@@ -197,9 +257,11 @@ void setup() {
 void loop() {
     get_time();
     get_imu_data();
-    apply_kalman_filters();
+    get_pressure_data();
     get_rc_data();
     calculate_PIDs();
+    apply_pid_to_pwm();
+    apply_pwm_to_propellers();
 
     print_dt();
     //print_rc_data();
@@ -207,16 +269,19 @@ void loop() {
     //print_omega_data();
     //print_acc_data();
     //print_propeller_thrust_data();
-    print_pwm_data();
+    //print_pwm_data();
     //print_pid_data();
     //print_raw_acc_data();
+    print_pressure_data();
+    //print_angle_rad();
+    //print_vertical_speed();
 
     //get_serial_commands();
-    Serial.println(F(""));
+    Serial.println("");
 }
 
 void calibrate_IMU() {
-    Serial.println(F("IMU cal..."));
+    Serial.println(F("IMU cal...\n"));
     for (int i = 0; i < CALIBRATION_ITERATIONS; i++) {
         IMU.readSensor();
         offset_omega[0] += IMU.getGyroX_rads();
@@ -233,7 +298,7 @@ void calibrate_IMU() {
     offset_acceleration[0] = offset_acceleration[0]/CALIBRATION_ITERATIONS;
     offset_acceleration[1] = offset_acceleration[1]/CALIBRATION_ITERATIONS;
     offset_acceleration[2] = offset_acceleration[2]/CALIBRATION_ITERATIONS+9.82f;
-    print_offsets();
+    //print_offsets();
 }
 
 
@@ -246,27 +311,49 @@ void get_time() {
 
 
 void calculate_PIDs() {
-    desired_value3 = 45.0*(roll_rc-0.5);
-    desired_value4 = 45.0*(pitch_rc-0.5);
+    if (remote_armed == true) {
+        desired_value3 = MAX_DEGREES*(roll_rc-0.5)*2;
+        desired_value4 = MAX_DEGREES*(pitch_rc-0.5)*2;
 
-    // PID 3 roll
-    output3 = pid3.Output(angle_deg[0], 0, dt);
+        if (abs(output3) > Kp_r*MAX_DEGREES) {
+            stop_integration_3 = true;
+        } else {
+            stop_integration_3 = false;
+        }
+        if (abs(output4) > Kp_r*MAX_DEGREES) {
+            stop_integration_4 = true;
+        } else {
+            stop_integration_4 = false;
+        }
+        // PID 3 roll
+        output3 = pid3.Output(angle_deg[0], desired_value3, dt, stop_integration_3);
+        // PID 4 pitch
+        output4 = pid4.Output(angle_deg[1], desired_value4, dt, stop_integration_4);
+        // PID 1 omega roll
+        output1 = pid1.Output(omega[0], -output3, dt);
+        // PID 2 omega pitch
+        output2 = pid2.Output(omega[1], output4, dt);
 
-    // PID 4 pitch
-    output4 = pid4.Output(angle_deg[1], 0, dt);
+        // desired_value6 = 10*(yaw_rc-0.5);
 
-    // PID 1 omega roll
-    output1 = pid1.Output(omega[0], -output3, dt);
+        // PID 6 yaw
+        // output6 = pid6.Output(omega[2], desired_value6, dt);
+        output6 = 0;
+    } else {
+        pid1.ResetOutput();
+        pid2.ResetOutput();
+        pid3.ResetOutput();
+        pid4.ResetOutput();
+        pid6.ResetOutput();
+        output1 = 0;
+        output2 = 0;
+        output3 = 0;
+        output4 = 0;
+        output6 = 0;
+    }
+}
 
-    // PID 2 omega pitch
-    output2 = pid2.Output(omega[1], output4, dt);
-
-    // desired_value6 = 10*(yaw_rc-0.5);
-
-    // PID 6 yaw
-    // output6 = pid6.Output(omega[2], desired_value6, dt);
-    output6 = 0;
-
+void apply_pid_to_pwm() {
     F1m = (-output1-output2);  // Force magnitude
     F2m = (+output1-output2);
     F3m = (-output1+output2);
@@ -293,30 +380,22 @@ void calculate_PIDs() {
     if (F3m > 1) {F3m = 1;}
     if (F4m > 1) {F4m = 1;}
 
-
-    if (!remote_turned_on) {
-        F1m = 0; F2m = 0; F3m = 0; F4m = 0;
-    }
-
     if (!remote_armed) {
         F1m = 0; F2m = 0; F3m = 0; F4m = 0;
     }
 
-    if (turnon_rc < 0.5f) {
-        F1m = 0; F2m = 0; F3m = 0; F4m = 0;
-    }
-
-    pwm_1 = (int)(F1m*255 + 0.5);
-    pwm_2 = (int)(F2m*255 + 0.5);
-    pwm_3 = (int)(F3m*255 + 0.5);
-    pwm_4 = (int)(F4m*255 + 0.5);
-
-    apply_pwm_to_propellers();
+    pwm_1 = static_cast<int>(F1m*255 + 0.5);
+    pwm_2 = static_cast<int>(F2m*255 + 0.5);
+    pwm_3 = static_cast<int>(F3m*255 + 0.5);
+    pwm_4 = static_cast<int>(F4m*255 + 0.5);
 }
 
 void get_imu_data() {
     // read the sensor
     IMU.readSensor();
+
+    temperature = IMU.getTemperature_C();
+    //temperature = filter8.Output(temperature);
 
     omega[0] = (IMU.getGyroX_rads()-offset_omega[0]);
     omega[1] = (IMU.getGyroY_rads()-offset_omega[1]);
@@ -337,39 +416,29 @@ void get_imu_data() {
     angle_deg[1] = wrap(r2d(angle[1]));
     angle_deg[2] = wrap(r2d(angle[2]));
 
-    if (abs(angle_deg[0]) < 1.0) {
-        angle[0] = 0;
-    }
-    if (abs(angle_deg[1]) < 1.0) {
-        angle[1] = 0;
-    }
+    acceleration[0] = filter1.Output(acceleration[0]);
+    acceleration[1] = filter2.Output(acceleration[1]);
+    acceleration[2] = filter3.Output(acceleration[2]);
+
+    omega[0] = filter4.Output(omega[0]);
+    omega[1] = filter5.Output(omega[1]);
+    omega[2] = filter6.Output(omega[2]);
+
+    vertical_acceleration_imu =  -(acceleration[2]*cos(angle[0])*cos(angle[1]) - acceleration[0]*sin(angle[1]) - acceleration[1]*cos(angle[1])*sin(angle[0])+9.82f);
+    vertical_speed_imu = (0.7f*vertical_speed_imu+0.3f*vertical_speed) + vertical_acceleration_imu*dt;
 }
 
 void get_pressure_data() {
-    //start a measurement
-    if (!bmx280.measure())
-    {
-    Serial.println("could not start measurement, is a measurement already running?");
-    return;
+    if (bmp280.getTempPres(temperature_BMP, pressure)) {
+        //pressure = filter9.Output(pressure);
+        altitude_BMP = (pow(1013.25e5/(pressure*1e5),1/5.257)-1)*(temperature+273.15)/0.0065;
+        //altitude_BMP = filter7.Output(altitude_BMP);
     }
+    vertical_speed_BMP = (altitude_BMP - altitude_BMP_prev)/dt; // m/s
+    vertical_speed_BMP = filter10.Output(vertical_speed_BMP);
+    altitude_BMP_prev = altitude_BMP;
 
-    //wait for the measurement to finish
-    do
-    {
-    delay(100);
-    } while (!bmx280.hasValue());
-
-    Serial.print("Pressure: "); Serial.println(bmx280.getPressure());
-    Serial.print("Pressure (64 bit): "); Serial.println(bmx280.getPressure64());
-    Serial.print("Temperature: "); Serial.println(bmx280.getTemperature());
-
-    //important: measurement data is read from the sensor in function hasValue() only. 
-    //make sure to call get*() functions only after hasValue() has returned true. 
-    if (bmx280.isBME280())
-    {
-    Serial.print("Humidity: "); 
-    Serial.println(bmx280.getHumidity());
-    }
+    vertical_speed = 0.05f*vertical_speed_BMP+0.95f*vertical_speed_imu;
 }
 
 void apply_pwm_to_propellers() {
@@ -384,16 +453,6 @@ void apply_pwm_to_propellers() {
     ESC_Servo_4.write(data4);
 }
 
-void apply_kalman_filters() {
-    acceleration[0] = filter1.Output(acceleration[0]);
-    acceleration[1] = filter2.Output(acceleration[1]);
-    acceleration[2] = filter3.Output(acceleration[2]);
-
-    omega[0] = filter4.Output(omega[0]);
-    omega[1] = filter5.Output(omega[1]);
-    omega[2] = filter6.Output(omega[2]);
-}
-
 
 void get_rc_data() {
     for (int channel = 0; channel < kChannelNumber; channel++) {
@@ -401,27 +460,21 @@ void get_rc_data() {
         channel_norm[channel] = ((float)value_channel - 1000)/1000;
     }
 
-    if (!remote_turned_on) {
-        if (channel_norm[0] != -1.0f) {
-            remote_turned_on = true;
-        }
-    }
-
-    if (!remote_armed) {
-        if (remote_turned_on == true) {
-            if (channel_norm[2] < 0.1) {
-                if (channel_norm[4] < 0.5) {
-                    remote_armed = true;
-                }
-            }
-        }
-    }
-
     roll_rc = channel_norm[0];
     pitch_rc = channel_norm[1];
     thrust_rc = channel_norm[2];
     yaw_rc = channel_norm[3];
-    turnon_rc = channel_norm[4];
+    remote_status = get_rc_status();
+
+    if (remote_status == 2) {
+        if (remote_armed == false) {
+            if (thrust_rc < 0.05) {
+                remote_armed = true;
+            }
+        }
+    } else {
+        remote_armed = false;
+    }
 }
 
 float r2d(float degrees) {
@@ -480,8 +533,8 @@ void print_rc_data() {
         Serial.print(channel_norm[i],4);
         delimiter();
     }
-    Serial.print(F("REMOTE:"));
-    Serial.print(remote_turned_on);
+    Serial.print(F("RC_STATUS:"));
+    Serial.print(get_rc_status());
     delimiter();
 }
 
@@ -492,6 +545,16 @@ void print_angle_deg() {
     Serial.print(angle_deg[1]);
     Serial.print(F(",AngZ:"));
     Serial.print(angle_deg[2]);
+    delimiter();
+}
+
+void print_angle_rad() {
+    Serial.print(F("AngX:"));
+    Serial.print(angle[0]);
+    Serial.print(F(",AngY:"));
+    Serial.print(angle[1]);
+    Serial.print(F(",AngZ:"));
+    Serial.print(angle[2]);
     delimiter();
 }
 
@@ -533,7 +596,7 @@ void print_offsets() {
     Serial.print(offset_omega[1]);
     delimiter();
     Serial.print(offset_omega[2]);
-    Serial.println(F(","));
+    delimiter();
 }
 
 void print_desired_values() {
@@ -541,7 +604,7 @@ void print_desired_values() {
     Serial.print(desired_value3);
     Serial.print(F(",desired_pitch:"));
     Serial.print(desired_value4);
-    Serial.print(F(","));
+    delimiter();
 }
 
 void print_pid_data() {
@@ -553,13 +616,62 @@ void print_pid_data() {
     Serial.print(output3);
     Serial.print(F(",pid4:"));
     Serial.print(output4);
-    Serial.print(F(","));
+    Serial.print(F(",desired3:"));
+    Serial.print(desired_value3);
+    Serial.print(F(",desired4:"));
+    Serial.print(desired_value4);
+    delimiter();
+}
+
+void print_pressure_data() {
+    Serial.print(F("temp:"));
+    Serial.print(temperature,4);                    // Display the results    
+    Serial.print(F(",press:"));
+    Serial.print(pressure*1e5);    
+    Serial.print(F(",alt:"));
+    Serial.print(altitude_BMP);
+    delimiter();
+}
+
+void print_vertical_speed() {
+    
+    Serial.print(F("vertical_speed_BMP:"));
+    Serial.print(vertical_speed_BMP);
+    delimiter();
+
+    Serial.print(F("vertical_acceleration_imu:"));
+    Serial.print(vertical_acceleration_imu);
+    delimiter();
+
+    Serial.print(F("vertical_speed_imu:"));
+    Serial.print(vertical_speed_imu);
+    delimiter();
+
+    Serial.print(F("vertical_speed:"));
+    Serial.print(vertical_speed);
+    delimiter();
+}
+
+int get_rc_status() {
+    if (channel_norm[4] < -0.5) {
+        // receiver connected, transmitter not connected
+        return -1;
+    } else if (channel_norm[4] > -0.1 && channel_norm[4] < 0.1) {
+        // fall back mode
+        return 0;
+    } else if (channel_norm[4] > 0.4 && channel_norm[4] < 0.6) {
+        // receiver connected, transmitter connected (NOT ARMED)
+        return 1;
+    } else if (channel_norm[4] > 0.9) {
+        // receiver connected, transmitter connected (ARMED)
+        return 2;
+    }
 }
 
 void print_dt() {
     Serial.print(F("dt:"));
-    Serial.print(dt);
-    Serial.print(F(","));
+    Serial.print(dt*1e3);
+    delimiter();
 }
 
 void delimiter() {
