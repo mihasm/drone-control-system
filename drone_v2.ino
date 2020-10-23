@@ -126,13 +126,13 @@ bool stop_integration_3, stop_integration_4;
 #define  Ki_5   0.0
 #define  Kd_5   0.0
 
-#define  Kp_6   0.1   // PID 6 - yaw (stopinje)
+#define  Kp_6   0.0   // PID 6 - yaw (stopinje)
 #define  Ki_6   0.0
 #define  Kd_6   0.0
 
 #define CALIBRATION_ITERATIONS 100
 
-#define MAX_DEGREES 20.0 // Max Degrees (Normal mode)
+#define MAX_DEGREES 45.0 // Max Degrees (Normal mode)
 #define MAX_DPS_YAW 5 // Degrees Per Second
 #define MAX_DPS_PITCH_ROLL 400 // Degrees Per Second (Acro mode)
 #define MAX_VERT_SPEED 1 // (Only Altitude hold mode)
@@ -395,9 +395,10 @@ void calculate_PIDs() {
             output5 = pid5.Output(vertical_speed,desired_value5,dt);
         }
 
-        desired_value6 = MAX_DPS_YAW*(yaw_rc-0.5)*2;
+        //desired_value6 = MAX_DPS_YAW*(yaw_rc-0.5)*2;
         // PID 6 yaw (All modes)
-        output6 = pid6.Output(r2d(omega[2]), desired_value6, dt);
+        //output6 = pid6.Output(r2d(omega[2]), desired_value6, dt);
+        output6 =  0.2f*(yaw_rc-0.5)*2;
 
     } else {
         pid1.ResetOutput();
