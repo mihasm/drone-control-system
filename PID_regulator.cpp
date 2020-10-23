@@ -32,6 +32,14 @@ float PID_regulator::Output(float input, float desired_value, float dt, bool sto
 	return output;
 }
 
+void PID_regulator::ResetID() {
+	this->error=0.0f;
+	this->error_prior=0.0f;
+	this->integral=0.0f;
+	this->integral_prior=0.0f;
+}
+
+
 void PID_regulator::ResetOutput() {
 	this->error=0.0f;
 	this->error_prior=0.0f;
