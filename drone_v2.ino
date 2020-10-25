@@ -9,14 +9,14 @@
 const char comma[] PROGMEM = {","};
 const char ADDRESSES[] PROGMEM = {0x76,0x68}; // [0]->BMP, [1]->IMU
 
-// MPU9250 I2C init
+// MPU9250 I2C init 
 MPU9250 IMU(Wire, ADDRESSES[1]);
 int status_IMU;
 float temperature, altitude_calc_prev;
 
 // BMP280 I2C init
 float temperature_BMP;
-float pressure = 1e5;            // Create the temperature, pressure and altitude variables
+float pressure = 1e3;            // Create the temperature, pressure and altitude variables
 BMP280_DEV bmp280;                                // Instantiate (create) a BMP280_DEV object and set-up for I2C operation
 float altitude_BMP, altitude_BMP_prev, vertical_speed_BMP;
 bool first_data = 1;
@@ -114,13 +114,13 @@ KalmanFilter filter1, filter2, filter3, filter4,
 PID_regulator pid1, pid2, pid3, pid4, pid5, pid6;
 bool stop_integration_3, stop_integration_4;
 
-#define  Kp   0.005  // PID 1,2 (stopnja B) (omega)
-#define  Ki   0.0
-#define  Kd   0.0
+#define  Kp   0.0005 // PID 1,2 (stopnja B) (omega)
+#define  Ki   0.000
+#define  Kd   0.000005
 
-#define  Kp_r   4.0   // PID 3,4 (stopnja A) (stopinje)
-#define  Ki_r   8.0  // npr 2
-#define  Kd_r   0.1
+#define  Kp_r   20.0   // PID 3,4 (stopnja A) (stopinje)
+#define  Ki_r   0.0  // npr 2
+#define  Kd_r   0.0
 
 #define  Kp_5   1.0   // PID 5 - thrust (Altitude hold)
 #define  Ki_5   0.0
@@ -132,9 +132,9 @@ bool stop_integration_3, stop_integration_4;
 
 #define CALIBRATION_ITERATIONS 100
 
-#define MAX_DEGREES 45.0 // Max Degrees (Normal mode)
+#define MAX_DEGREES 15.0 // Max Degrees (Normal mode)
 #define MAX_DPS_YAW 5 // Degrees Per Second
-#define MAX_DPS_PITCH_ROLL 400 // Degrees Per Second (Acro mode)
+#define MAX_DPS_PITCH_ROLL 180 // Degrees Per Second (Acro mode)
 #define MAX_VERT_SPEED 1 // (Only Altitude hold mode)
 
 float desired_value1;
@@ -175,7 +175,18 @@ void setup() {
     offset_servo3 = 0;
     offset_servo4 = 0;
 
+    status_IMU = IMU.begin();
+
+    int sensorValue = analogRead(A7);
+    float voltage = sensorValue * (5.0/1023.0) * 3.518816f;
+
+    Serial.print(F("Voltage: "));
+    Serial.print(voltage);
+    Serial.println(F(" V"));
+
     // IMU
+    delay(1000);
+
     Serial.print(F("Initializing IMU"));
     for (int i=0; i < 100; i++) {
         Serial.print(".");
@@ -264,15 +275,17 @@ void setup() {
 
     //calibrate_IMU();
 
-    /*
+    
     // WAIT FOR TRANSMITTER
     Serial.print(F("Waiting for transmitter... "));
     while (get_rc_status() != 1) {
+        Serial.print(F(" "));
+        Serial.print(get_rc_status());
         get_rc_data();
         delay(100);
     }
     Serial.print(F("Transmitter detected, starting loop!\n"));
-    */
+    
 
     time_start = micros();
     time_prev = time_start;
@@ -280,12 +293,20 @@ void setup() {
 
 void loop() {
     get_time();
+    get_rc_data();
     get_imu_data();
     get_pressure_data();
-    get_rc_data();
     calculate_PIDs();
     apply_pid_to_pwm();
-    apply_pwm_to_propellers();
+
+    if (remote_armed) {
+        apply_pwm_to_propellers();
+    } else {
+        ESC_Servo_1.writeMicroseconds(1000);
+        ESC_Servo_2.writeMicroseconds(1000);
+        ESC_Servo_3.writeMicroseconds(1000);
+        ESC_Servo_4.writeMicroseconds(1000);
+    }
 
     print_dt();
     //print_rc_data();
