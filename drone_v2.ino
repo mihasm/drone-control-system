@@ -28,7 +28,7 @@ int offset_servo1, offset_servo2, offset_servo3, offset_servo4;
 
 // RC stuff
 #define kChannelNumber 6  // Number of channels
-float channel_norm[12];
+float channel_norm[kChannelNumber];
 #define PIN_RECEIVER 2  // rc receiver PPM pin
 PPMReader ppm(PIN_RECEIVER, kChannelNumber);
 bool remote_armed = false;
@@ -114,11 +114,11 @@ KalmanFilter filter1, filter2, filter3, filter4,
 PID_regulator pid1, pid2, pid3, pid4, pid5, pid6;
 bool stop_integration_3, stop_integration_4;
 
-#define  Kp   0.0005 // PID 1,2 (stopnja B) (omega)
-#define  Ki   0.000
+#define  Kp   0.0010 // PID 1,2 (stopnja B) (omega)
+#define  Ki   0.0000
 #define  Kd   0.000005
 
-#define  Kp_r   20.0   // PID 3,4 (stopnja A) (stopinje)
+#define  Kp_r   10.0   // PID 3,4 (stopnja A) (stopinje)
 #define  Ki_r   0.0  // npr 2
 #define  Kd_r   0.0
 
@@ -165,8 +165,8 @@ void setup() {
     ESC_Servo_3.write(0);
     ESC_Servo_4.write(0);
 
-    Serial.begin(115200);
-    //Serial.setTimeout(150);
+    Serial.begin(230400);
+    Serial.setTimeout(150);
     while (!Serial) {}
     Serial.print(F("Init...\n"));
 
@@ -189,31 +189,33 @@ void setup() {
 
     Serial.print(F("Initializing IMU"));
     for (int i=0; i < 100; i++) {
-        Serial.print(".");
         status_IMU = IMU.begin();  // if  < 0 not initialized
+        Serial.print(status_IMU);
+        Serial.print(",");
         if (status_IMU == 1) {
             Serial.print("!\n");
             break;
         }
-        delay(100);
+        delay(1000);
     }
     if (status_IMU < 0) {
         Serial.print(F("IMU initialization failed!"));
         while (1) {};
     }
 
-    IMU.setAccelRange(MPU9250::ACCEL_RANGE_8G);
-    IMU.setGyroRange(MPU9250::GYRO_RANGE_500DPS);
-    IMU.setDlpfBandwidth(MPU9250::DLPF_BANDWIDTH_20HZ);
-    // setting SRD to 19 for a 50 Hz update rate
-    IMU.setSrd(19);
+    IMU.setAccelRange(MPU9250::ACCEL_RANGE_2G);
+    IMU.setGyroRange(MPU9250::GYRO_RANGE_250DPS);
+    IMU.setDlpfBandwidth(MPU9250::DLPF_BANDWIDTH_184HZ);
+    // setting SRD to 4 for a 200 Hz update rate
+    // Sample rate divider
+    IMU.setSrd(0);
 
     while(IMU.readSensor() != 1) {
         delay(10);
         temperature = IMU.getTemperature_C();
     }
     
-
+    /*
     if (!bmp280.begin(ADDRESSES[0])) {
         Serial.print(F("BMP initialization failed!"));
         while (1) {};
@@ -227,6 +229,7 @@ void setup() {
     while (!bmp280.getTempPres(temperature_BMP, pressure)) {
         delay(10);
     }
+    */
 
     altitude_BMP = (pow(1013.25/pressure,1/5.257)-1)*(temperature+273.15)/0.0065;
 
@@ -276,7 +279,7 @@ void setup() {
     //calibrate_IMU();
 
     
-    // WAIT FOR TRANSMITTER
+    /*
     Serial.print(F("Waiting for transmitter... "));
     while (get_rc_status() != 1) {
         Serial.print(F(" "));
@@ -285,7 +288,7 @@ void setup() {
         delay(100);
     }
     Serial.print(F("Transmitter detected, starting loop!\n"));
-    
+    */
 
     time_start = micros();
     time_prev = time_start;
@@ -293,12 +296,13 @@ void setup() {
 
 void loop() {
     get_time();
-    get_rc_data();
+    //get_rc_data();
     get_imu_data();
-    get_pressure_data();
-    calculate_PIDs();
-    apply_pid_to_pwm();
+    //get_pressure_data();
+    //calculate_PIDs();
+    //apply_pid_to_pwm();
 
+    
     if (remote_armed) {
         apply_pwm_to_propellers();
     } else {
@@ -307,14 +311,16 @@ void loop() {
         ESC_Servo_3.writeMicroseconds(1000);
         ESC_Servo_4.writeMicroseconds(1000);
     }
+    
 
-    print_dt();
+    //print_dt();
+    print_frequency();
     //print_rc_data();
     //print_angle_deg();
-    //print_omega_data();
-    //print_acc_data();
+    //print_omega_data(); // raw rot. velocity
+    //print_acc_data(); // raw acceleration
     //print_propeller_thrust_data();
-    print_pwm_data();
+    //print_pwm_data();
     //print_pid_data();
     //print_raw_acc_data();
     //print_pressure_data();
@@ -487,19 +493,19 @@ void get_imu_data() {
     acceleration[1] = (IMU.getAccelY_mss()-offset_acceleration[1]);
     acceleration[2] = (IMU.getAccelZ_mss()-offset_acceleration[2]);
 
-    acceleration[0] = filter1.Output(acceleration[0]);
-    acceleration[1] = filter2.Output(acceleration[1]);
-    acceleration[2] = filter3.Output(acceleration[2]);
+    //acceleration[0] = filter1.Output(acceleration[0]);
+    //acceleration[1] = filter2.Output(acceleration[1]);
+    //acceleration[2] = filter3.Output(acceleration[2]);
 
-    omega[0] = filter4.Output(omega[0]);
-    omega[1] = filter5.Output(omega[1]);
-    omega[2] = filter6.Output(omega[2]);
+    //omega[0] = filter4.Output(omega[0]);
+    //omega[1] = filter5.Output(omega[1]);
+    //omega[2] = filter6.Output(omega[2]);
 
     angle_acc[0] = atan2(acceleration[1], sqrt(acceleration[2] * acceleration[2] + acceleration[0] * acceleration[0]));
     angle_acc[1] = atan2(acceleration[0], sqrt(acceleration[2] * acceleration[2] + acceleration[1] * acceleration[1]));
 
-    angle[0] = (0.9f * (angle[0] + omega[0] * dt)) + (0.1f * angle_acc[0]);
-    angle[1] = (0.9f * (angle[1] + omega[1] * dt)) + (0.1f * angle_acc[1]);
+    angle[0] = (0.75f * (angle[0] + omega[0] * dt)) + (0.25f * angle_acc[0]);
+    angle[1] = (0.75f * (angle[1] + omega[1] * dt)) + (0.25f * angle_acc[1]);
     angle[2] = 0.0f;
 
     angle_deg[0] = wrap(r2d(angle[0]));
@@ -543,8 +549,8 @@ void apply_pwm_to_propellers() {
 
 void get_rc_data() {
     for (int channel = 0; channel < kChannelNumber; channel++) {
-        value_channel = ppm.rawChannelValue(channel+1);
-        channel_norm[channel] = ((float)value_channel - 1000)/1000;
+        value_channel = ppm.latestValidChannelValue(channel+1,0);
+        channel_norm[channel] = ((float)value_channel - 1000)/1000; // TODO: this line eats up 400 ms of time....
     }
 
     roll_rc = channel_norm[0];
@@ -789,6 +795,12 @@ bool flight_mode_change() {
 void print_dt() {
     Serial.print(F("dt:"));
     Serial.print(dt*1e3);
+    delimiter();
+}
+
+void print_frequency() {
+    Serial.print(F("f:"));
+    Serial.print(1/dt);
     delimiter();
 }
 
