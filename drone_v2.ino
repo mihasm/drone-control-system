@@ -3,16 +3,22 @@
 #include <KalmanFilter.h>
 #include <PID_regulator.h>
 #include <Servo.h>
-#include "MPU9250.h"
 #include <BMP280_DEV.h>
+#include <MPU9255.h>// include MPU9255 library
 
 const char comma[] PROGMEM = {","};
 const char ADDRESSES[] PROGMEM = {0x76,0x68}; // [0]->BMP, [1]->IMU
 
-// MPU9250 I2C init 
-MPU9250 IMU(Wire, ADDRESSES[1]);
+// MPU9255 I2C init 
+
+#define g 9.81 // 1g ~ 9.81 m/s^2
+#define magnetometer_cal 0.06 //magnetometer calibration
+
+MPU9255 mpu;
 int status_IMU;
 float temperature, altitude_calc_prev;
+#define acc_scale_value scale_4g
+#define gyro_scale_value scale_500dps
 
 // BMP280 I2C init
 float temperature_BMP;
@@ -175,8 +181,6 @@ void setup() {
     offset_servo3 = 0;
     offset_servo4 = 0;
 
-    status_IMU = IMU.begin();
-
     int sensorValue = analogRead(A7);
     float voltage = sensorValue * (5.0/1023.0) * 3.518816f;
 
@@ -187,35 +191,28 @@ void setup() {
     // IMU
     delay(1000);
 
-    Serial.print(F("Initializing IMU"));
-    for (int i=0; i < 100; i++) {
-        status_IMU = IMU.begin();  // if  < 0 not initialized
-        Serial.print(status_IMU);
-        Serial.print(",");
-        if (status_IMU == 1) {
-            Serial.print("!\n");
-            break;
-        }
-        delay(1000);
-    }
-    if (status_IMU < 0) {
-        Serial.print(F("IMU initialization failed!"));
+    Serial.print(F("Initializing IMU..."));
+    if(mpu.init()){
+        Serial.println("initialization failed");
         while (1) {};
+    } else {
+        Serial.println("initialization successful!");
     }
 
-    IMU.setAccelRange(MPU9250::ACCEL_RANGE_2G);
-    IMU.setGyroRange(MPU9250::GYRO_RANGE_250DPS);
-    IMU.setDlpfBandwidth(MPU9250::DLPF_BANDWIDTH_184HZ);
-    // setting SRD to 4 for a 200 Hz update rate
-    // Sample rate divider
-    IMU.setSrd(0);
+    mpu.set_acc_bandwidth(acc_1113Hz);//set accelerometer bandwidth
+    mpu.set_gyro_bandwidth(gyro_250Hz);//set gyroscope bandwidth
+    mpu.set_acc_scale(acc_scale_value);
+    mpu.set_gyro_scale(gyro_scale_value);
 
-    while(IMU.readSensor() != 1) {
-        delay(10);
-        temperature = IMU.getTemperature_C();
-    }
-    
-    /*
+    //set new offset
+
+    mpu.set_gyro_offset(X_axis,-43);
+    mpu.set_gyro_offset(Y_axis,88);
+    mpu.set_gyro_offset(Z_axis,-14);
+    mpu.set_acc_offset(X_axis,907);
+    mpu.set_acc_offset(Y_axis,241);
+    mpu.set_acc_offset(Z_axis,194);
+
     if (!bmp280.begin(ADDRESSES[0])) {
         Serial.print(F("BMP initialization failed!"));
         while (1) {};
@@ -229,7 +226,6 @@ void setup() {
     while (!bmp280.getTempPres(temperature_BMP, pressure)) {
         delay(10);
     }
-    */
 
     altitude_BMP = (pow(1013.25/pressure,1/5.257)-1)*(temperature+273.15)/0.0065;
 
@@ -268,18 +264,7 @@ void setup() {
     output5 = 0;
     output6 = 0;
 
-    offset_acceleration[0]=-2.37f;
-    offset_acceleration[1]=-8.68f;
-    offset_acceleration[2]=1.89f;
-
-    offset_omega[0]=0.0f;
-    offset_omega[1]=0.0f;
-    offset_omega[2]=0.0f;
-
-    //calibrate_IMU();
-
     
-    /*
     Serial.print(F("Waiting for transmitter... "));
     while (get_rc_status() != 1) {
         Serial.print(F(" "));
@@ -288,7 +273,8 @@ void setup() {
         delay(100);
     }
     Serial.print(F("Transmitter detected, starting loop!\n"));
-    */
+    
+    
 
     time_start = micros();
     time_prev = time_start;
@@ -296,11 +282,11 @@ void setup() {
 
 void loop() {
     get_time();
-    //get_rc_data();
+    get_rc_data();
     get_imu_data();
     //get_pressure_data();
-    //calculate_PIDs();
-    //apply_pid_to_pwm();
+    calculate_PIDs();
+    apply_pid_to_pwm();
 
     
     if (remote_armed) {
@@ -314,9 +300,9 @@ void loop() {
     
 
     //print_dt();
-    print_frequency();
+    //print_frequency();
     //print_rc_data();
-    //print_angle_deg();
+    print_angle_deg();
     //print_omega_data(); // raw rot. velocity
     //print_acc_data(); // raw acceleration
     //print_propeller_thrust_data();
@@ -331,25 +317,104 @@ void loop() {
     Serial.println(F(""));
 }
 
-void calibrate_IMU() {
-    Serial.println(F("IMU cal...\n"));
-    for (int i = 0; i < CALIBRATION_ITERATIONS; i++) {
-        IMU.readSensor();
-        offset_omega[0] += IMU.getGyroX_rads();
-        offset_omega[1] += IMU.getGyroY_rads();
-        offset_omega[2] += IMU.getGyroZ_rads();
-        offset_acceleration[0] += IMU.getAccelX_mss();
-        offset_acceleration[1] += IMU.getAccelY_mss();
-        offset_acceleration[2] += IMU.getAccelZ_mss();
-        delay(10);
-    }
-    offset_omega[0] = offset_omega[0]/CALIBRATION_ITERATIONS;
-    offset_omega[1] = offset_omega[1]/CALIBRATION_ITERATIONS;
-    offset_omega[2] = offset_omega[2]/CALIBRATION_ITERATIONS;
-    offset_acceleration[0] = offset_acceleration[0]/CALIBRATION_ITERATIONS;
-    offset_acceleration[1] = offset_acceleration[1]/CALIBRATION_ITERATIONS;
-    offset_acceleration[2] = offset_acceleration[2]/CALIBRATION_ITERATIONS+9.82f;
-    print_offsets();
+double process_acceleration(int input, scales sensor_scale ) {
+  /*
+  To get acceleration in 'g', each reading has to be divided by :
+   -> 16384 for +- 2g scale (default scale)
+   -> 8192  for +- 4g scale
+   -> 4096  for +- 8g scale
+   -> 2048  for +- 16g scale
+  */
+  double output = 1;
+
+  //for +- 2g
+
+  if(sensor_scale == scale_2g)
+  {
+    output = input;
+    output = output/16384;
+    output = output*g;
+  }
+
+  //for +- 4g
+  if(sensor_scale == scale_4g)
+  {
+    output = input;
+    output = output/8192;
+    output = output*g;
+  }
+
+  //for +- 8g
+  if(sensor_scale == scale_8g)
+  {
+    output = input;
+    output = output/4096;
+    output = output*g;
+  }
+
+  //for +-16g
+  if(sensor_scale == scale_16g)
+  {
+    output = input;
+    output = output/2048;
+    output = output*g;
+  }
+
+  return output;
+}
+
+//process raw gyroscope data
+//input = raw reading from the sensor, sensor_scale = selected sensor scale
+//returns : angular velocity in degrees per second
+double process_angular_velocity(int16_t input, scales sensor_scale ) {
+  /*
+  To get rotation velocity in dps (degrees per second), each reading has to be divided by :
+   -> 131   for +- 250  dps scale (default value)
+   -> 65.5  for +- 500  dps scale
+   -> 32.8  for +- 1000 dps scale
+   -> 16.4  for +- 2000 dps scale
+  */
+
+  //for +- 250 dps
+  if(sensor_scale == scale_250dps)
+  {
+    return input/131;
+  }
+
+  //for +- 500 dps
+  if(sensor_scale == scale_500dps)
+  {
+    return input/65.5;
+  }
+
+  //for +- 1000 dps
+  if(sensor_scale == scale_1000dps)
+  {
+    return input/32.8;
+  }
+
+  //for +- 2000 dps
+  if(sensor_scale == scale_2000dps)
+  {
+    return input/16.4;
+  }
+
+  return 0;
+}
+
+//process raw magnetometer data
+//input = raw reading from the sensor, sensitivity =
+//returns : magnetic flux density in μT (in micro Teslas)
+double process_magnetic_flux(int16_t input, double sensitivity) {
+  /*
+  To get magnetic flux density in μT, each reading has to be multiplied by sensitivity
+  (Constant value different for each axis, stored in ROM), then multiplied by some number (calibration)
+  and then divided by 0.6 .
+  (Faced North each axis should output around 31 µT without any metal / walls around
+  Note : This manetometer has really low initial calibration tolerance : +- 500 LSB !!!
+  Scale of the magnetometer is fixed -> +- 4800 μT.
+  */
+  return (input*magnetometer_cal*sensitivity)/0.6;
 }
 
 
@@ -393,12 +458,13 @@ void calculate_PIDs() {
             // Normal mode or Altitude hold mode
             desired_value3 = MAX_DEGREES*(roll_rc-0.5)*2;
             desired_value4 = MAX_DEGREES*(pitch_rc-0.5)*2;
+            
             // PID 3 roll
-            output3 = pid3.Output(angle_deg[0], desired_value3, dt, stop_integration_3);
+            output3 = pid3.Output(-angle_deg[0], -desired_value3, dt, stop_integration_3);
             // PID 4 pitch
             output4 = pid4.Output(angle_deg[1], desired_value4, dt, stop_integration_4);
             // PID 1 omega roll
-            output1 = pid1.Output(r2d(omega[0]), -output3, dt);
+            output1 = pid1.Output(r2d(-omega[0]), output3, dt);
             // PID 2 omega pitch
             output2 = pid2.Output(r2d(omega[1]), output4, dt);
 
@@ -408,8 +474,9 @@ void calculate_PIDs() {
             output4 = 0;
             desired_value1 = MAX_DPS_PITCH_ROLL*(roll_rc-0.5)*2;
             desired_value2 = MAX_DPS_PITCH_ROLL*(pitch_rc-0.5)*2;
+            
             // PID 1 omega roll
-            output1 = pid1.Output(r2d(omega[0]), -desired_value1, dt);
+            output1 = pid1.Output(r2d(-omega[0]), -desired_value1, dt);
             // PID 2 omega pitch
             output2 = pid2.Output(r2d(omega[1]), desired_value2, dt);
 
@@ -480,32 +547,34 @@ void apply_pid_to_pwm() {
 
 void get_imu_data() {
     // read the sensor
-    IMU.readSensor();
+    mpu.read_acc();
+    mpu.read_gyro();
+    //mpu.read_mag();
 
-    temperature = IMU.getTemperature_C();
-    //temperature = filter8.Output(temperature);
+    // temperature = IMU.getTemperature_C();
+    // temperature = filter8.Output(temperature);
 
-    omega[0] = (IMU.getGyroX_rads()-offset_omega[0]);
-    omega[1] = (IMU.getGyroY_rads()-offset_omega[1]);
-    omega[2] = (IMU.getGyroZ_rads()-offset_omega[2]);
+    omega[0] = -process_angular_velocity(mpu.gy,gyro_scale_value)*0.0174533;
+    omega[1] = process_angular_velocity(mpu.gx,gyro_scale_value)*0.0174533;
+    omega[2] = process_angular_velocity(mpu.gz,gyro_scale_value)*0.0174533;
 
-    acceleration[0] = (IMU.getAccelX_mss()-offset_acceleration[0]);
-    acceleration[1] = (IMU.getAccelY_mss()-offset_acceleration[1]);
-    acceleration[2] = (IMU.getAccelZ_mss()-offset_acceleration[2]);
+    acceleration[0] = process_acceleration(mpu.ay,acc_scale_value);
+    acceleration[1] = process_acceleration(mpu.ax,acc_scale_value);
+    acceleration[2] = process_acceleration(mpu.az,acc_scale_value);
 
-    //acceleration[0] = filter1.Output(acceleration[0]);
-    //acceleration[1] = filter2.Output(acceleration[1]);
-    //acceleration[2] = filter3.Output(acceleration[2]);
+    acceleration[0] = filter1.Output(acceleration[0]);
+    acceleration[1] = filter2.Output(acceleration[1]);
+    acceleration[2] = filter3.Output(acceleration[2]);
 
-    //omega[0] = filter4.Output(omega[0]);
-    //omega[1] = filter5.Output(omega[1]);
-    //omega[2] = filter6.Output(omega[2]);
+    omega[0] = filter4.Output(omega[0]);
+    omega[1] = filter5.Output(omega[1]);
+    omega[2] = filter6.Output(omega[2]);
 
     angle_acc[0] = atan2(acceleration[1], sqrt(acceleration[2] * acceleration[2] + acceleration[0] * acceleration[0]));
     angle_acc[1] = atan2(acceleration[0], sqrt(acceleration[2] * acceleration[2] + acceleration[1] * acceleration[1]));
 
-    angle[0] = (0.75f * (angle[0] + omega[0] * dt)) + (0.25f * angle_acc[0]);
-    angle[1] = (0.75f * (angle[1] + omega[1] * dt)) + (0.25f * angle_acc[1]);
+    angle[0] = (0.98f * (angle[0] + omega[0] * dt)) + (0.02f * angle_acc[0]);
+    angle[1] = (0.98f * (angle[1] + omega[1] * dt)) + (0.02f * angle_acc[1]);
     angle[2] = 0.0f;
 
     angle_deg[0] = wrap(r2d(angle[0]));
@@ -610,11 +679,11 @@ void print_acc_data() {
 
 void print_raw_acc_data() {
     Serial.print(F("aXr:"));
-    Serial.print(IMU.getAccelX_mss());
+    Serial.print(mpu.ax);
     Serial.print(F(",aYr:"));
-    Serial.print(IMU.getAccelY_mss());
+    Serial.print(mpu.ay);
     Serial.print(F(",aZr:"));
-    Serial.print(IMU.getAccelZ_mss());
+    Serial.print(mpu.az);
     delimiter();
 }
 
