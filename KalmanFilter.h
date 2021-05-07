@@ -1,10 +1,12 @@
 class KalmanFilter {
 
     public:
-    float A, H, Q, R, P, x, K;
+    float Q, R, P, x, K;
+    float A=1;
+    float H=1;
 
     KalmanFilter();
     float Output(float input);
-    void change_parameters(float A, float H, float Q, float R, float initial_P, float initial_x);
+    void change_parameters(float Q, float R, float initial_x);
 
 };
