@@ -11,14 +11,12 @@ const char comma[] PROGMEM = {","};
 // MPU9255 I2C init 
 MPU9250_DMP imu;
 int status_IMU;
-float temperature, altitude_calc_prev;
 #define acc_scale_value scale_2g
 #define gyro_scale_value scale_250dps
 
 // Servo stuff
 Servo ESC_Servo_1, ESC_Servo_2, ESC_Servo_3, ESC_Servo_4;
 int data1, data2, data3, data4;
-float offset_servo1, offset_servo2, offset_servo3, offset_servo4;
 
 // RC stuff
 #define kChannelNumber 6  // Number of channels
@@ -142,11 +140,6 @@ void setup() {
     while (!Serial) {}
     Serial.print(F("Init...\n"));
 
-    offset_servo1 = 0;
-    offset_servo2 = 0;
-    offset_servo3 = 0;
-    offset_servo4 = 0;
-
     int sensorValue = analogRead(A7);
     float voltage = sensorValue * (5.0/1023.0) * 3.518816f;
 
@@ -216,7 +209,6 @@ void setup() {
     output5 = 0;
     output6 = 0;
 
-    
     Serial.print(F("Waiting for transmitter... "));
     while (get_rc_status() != 1) {
         Serial.print(F(" "));
@@ -226,8 +218,6 @@ void setup() {
     }
     Serial.print(F("Transmitter detected, starting loop!\n"));
     
-    
-
     time_start = micros();
     time_prev = time_start;
 
@@ -412,11 +402,6 @@ void apply_pid_to_pwm() {
     F2m += (+output5 +output6);
     F3m += (+output5 +output6);
     F4m += (+output5 -output6);
-
-    F1m += offset_servo1;  // Force magnitude
-    F2m += offset_servo2;
-    F3m += offset_servo3;
-    F4m += offset_servo4;
 
     if (F1m < 0) {F1m = 0;}
     if (F2m < 0) {F2m = 0;}
