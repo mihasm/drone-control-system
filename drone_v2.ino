@@ -110,8 +110,8 @@ bool stop_integration_3, stop_integration_4;
 #define  Ki_yaw   0.0
 #define  Kd_yaw   0.0
 
-float desired_value1,desired_value2,desired_value3,desired_value4,desired_value5,desired_value6;
-float output1,output2,output3,output4,output5,output6;
+float desired_value1,desired_value2,desired_value3,desired_value4,desired_value5,desired_value6 = 0;
+float output1,output2,output3,output4,output5,output6 = 0;
 
 // MAIN OUTPUTS
 
@@ -140,12 +140,8 @@ void setup() {
     while (!Serial) {}
     Serial.print(F("Init...\n"));
 
-    int sensorValue = analogRead(A7);
-    float voltage = sensorValue * (5.0/1023.0) * 3.518816f;
-
-    Serial.print(F("Voltage: "));
-    Serial.print(voltage);
-    Serial.println(F(" V"));
+    //int sensorValue = analogRead(A7);
+    //float voltage = sensorValue * (5.0/1023.0) * 3.518816f;
 
     // IMU
     delay(1000);
@@ -166,11 +162,10 @@ void setup() {
     // Accel options are +/- 2, 4, 8, or 16 g
     imu.setAccelFSR(4); // Set accel to +/-2g
 
-    // The sample rate of the accel/gyro can be set using
-    // setSampleRate. Acceptable values range from 4Hz to 1kHz
+    // Sample rate of the accel/gyro (4Hz to 1kHz)
     imu.setSampleRate(1000);
 
-    // set LPF
+    // Set LPF
     //imu.setLPF(98);
 
     // set up kalman filters
@@ -194,20 +189,6 @@ void setup() {
     pid4.set_parameters(Kp_theta_pitch, Ki_theta_pitch, Kd_theta_pitch);
     //pid5.set_parameters(Kp_5, Ki_5, Kd_5);
     //pid6.set_parameters(Kp_6, Ki_6, Kd_6);
-
-    desired_value1 = 0;
-    desired_value2 = 0;
-    desired_value3 = 0;
-    desired_value4 = 0;
-    desired_value5 = 0;
-    desired_value6 = 0;
-
-    output1 = 0;
-    output2 = 0;
-    output3 = 0;
-    output4 = 0;
-    output5 = 0;
-    output6 = 0;
 
     Serial.print(F("Waiting for transmitter... "));
     while (get_rc_status() != 1) {
