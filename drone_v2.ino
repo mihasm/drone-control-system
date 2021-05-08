@@ -76,7 +76,7 @@ float offset_omega[3] = {0.04f, 0.02f, 0.01f};
 //LPF
 LPF lpfilter_roll_rc,lpfilter_pitch_rc,lpfilter_thrust_rc,lpfilter_yaw_rc;
 #define f_c 10 // Hz, cutoff frequency
-#define f_c_rc 2 // Hz, cutoff freuqency RC
+#define f_c_rc 4 // Hz, cutoff freuqency RC
 
 // TripleFilter
 TripleFilter filt1,filt2,filt3,filt4,filt5,filt6;
@@ -86,13 +86,27 @@ TripleFilter filt1,filt2,filt3,filt4,filt5,filt6;
 PID_regulator pid1, pid2, pid3, pid4, pid5, pid6;
 bool stop_integration_3, stop_integration_4;
 
-#define  Kp_w   0.0004 // PID 1,2 (stopnja B) (omega)
-#define  Ki_w   0
-#define  Kd_w   8e-6
+// PITCH
 
-#define  Kp_theta   8   // PID 3,4 (stopnja A) (stopinje)
-#define  Ki_theta   0.08
-#define  Kd_theta   0
+#define  Kp_w_pitch   0.0002 // PID 1,2 (stopnja B) (omega)
+#define  Ki_w_pitch   0
+#define  Kd_w_pitch   8e-6
+
+#define  Kp_theta_pitch   7   // PID 3,4 (stopnja A) (stopinje)
+#define  Ki_theta_pitch   1
+#define  Kd_theta_pitch   0
+
+// ROLL
+
+#define  Kp_w_roll   0.00005 // PID 1,2 (stopnja B) (omega)
+#define  Ki_w_roll   0
+#define  Kd_w_roll   8e-7
+
+#define  Kp_theta_roll   6   // PID 3,4 (stopnja A) (stopinje)
+#define  Ki_theta_roll   1
+#define  Kd_theta_roll   0
+
+// YAW
 
 #define  Kp_yaw   0.00005   // PID 6 - yaw (stopinje)
 #define  Ki_yaw   0.0
@@ -105,7 +119,7 @@ float output1,output2,output3,output4,output5,output6;
 
 #define MAX_DEGREES 15.0 // Max Degrees (Normal mode)
 #define MAX_DPS_YAW 180 // Degrees Per Second
-#define MAX_DPS_PITCH_ROLL 120 // Degrees Per Second (Acro mode)
+#define MAX_DPS_PITCH_ROLL 150 // Degrees Per Second (Acro mode)
 #define MAX_VERT_SPEED 1 // (Only Altitude hold mode)
 
 float F1m, F2m, F3m, F4m;
@@ -181,10 +195,10 @@ void setup() {
     lpfilter_pitch_rc.change_parameters(f_c_rc,0.5);
     
     // set up PIDs
-    pid1.set_parameters(Kp_w, Ki_w, Kd_w);
-    pid2.set_parameters(Kp_w, Ki_w, Kd_w);
-    pid3.set_parameters(Kp_theta, Ki_theta, Kd_theta);
-    pid4.set_parameters(Kp_theta, Ki_theta, Kd_theta);
+    pid1.set_parameters(Kp_w_roll, Ki_w_roll, Kd_w_roll);
+    pid2.set_parameters(Kp_w_pitch, Ki_w_pitch, Kd_w_pitch);
+    pid3.set_parameters(Kp_theta_roll, Ki_theta_roll, Kd_theta_roll);
+    pid4.set_parameters(Kp_theta_pitch, Ki_theta_pitch, Kd_theta_pitch);
     //pid5.set_parameters(Kp_5, Ki_5, Kd_5);
     //pid6.set_parameters(Kp_6, Ki_6, Kd_6);
 
@@ -309,12 +323,12 @@ void get_time_pressure() {
 
 void calculate_PIDs() {
     if (remote_armed == true) {
-        if (abs(output3) > Kp_theta*MAX_DEGREES*2) {
+        if (abs(output3) > Kp_theta_roll*MAX_DEGREES*2) {
             stop_integration_3 = true;
         } else {
             stop_integration_3 = false;
         }
-        if (abs(output4) > Kp_theta*MAX_DEGREES*2) {
+        if (abs(output4) > Kp_theta_pitch*MAX_DEGREES*2) {
             stop_integration_4 = true;
         } else {
             stop_integration_4 = false;
