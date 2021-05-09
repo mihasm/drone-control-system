@@ -6,22 +6,23 @@
 #include <TripleFilter.h>
 
 const char comma[] PROGMEM = {","};
-#define g 9.81 // 1g ~ 9.81 m/s^2
 
-// MPU9255 I2C init 
+// MPU9255
+
 MPU9250_DMP imu;
 int status_IMU;
-#define acc_scale_value scale_2g
-#define gyro_scale_value scale_250dps
 
 // Servo stuff
+
 Servo ESC_Servo_1, ESC_Servo_2, ESC_Servo_3, ESC_Servo_4;
 int data1, data2, data3, data4;
 
 // RC stuff
+
 #define kChannelNumber 6  // Number of channels
-float channel_norm[kChannelNumber];
 #define PIN_RECEIVER 2  // rc receiver PPM pin
+
+float channel_norm[kChannelNumber];
 PPMReader ppm(PIN_RECEIVER, kChannelNumber);
 bool remote_armed = false;
 int remote_status = -2;
@@ -33,9 +34,11 @@ unsigned long value_channel;
 float last_flight_mode = -2;
 
 // time variables
+
 unsigned long time_start, time_now, time_prev;
 float dt;
-float frequency_saved;
+
+float freq;
 int counter;
 
 unsigned long time_now_pres, time_prev_pres;
@@ -60,69 +63,70 @@ float vertical_acceleration_imu;
 float vertical_speed;
 float vertical_speed_imu;
 
-float offset_acceleration[3] = {-2.13f, -18.57f, 7.48f};
+float offset_acceleration[3] = {-2.35f, -8.75f, 1.98f};
 float offset_omega[3] = {0.04f, 0.02f, 0.01f};
 
 // Omega filter
+
 #define  Q_w   0.5   // Process noise (wind/driver input)
 #define  R_w   0.5   // sensor inaccuracy. more = more innacurate
 
 // Acceleration filter
+
 #define  Q_a   0.5   // Process noise (wind/driver input)
 #define  R_a   0.5   // sensor inaccuracy. more = more innacurate
 
-//LPF
-LPF lpfilter_roll_rc,lpfilter_pitch_rc,lpfilter_thrust_rc,lpfilter_yaw_rc;
+// LPF
+
+LPF LPF_roll_rc,LPF_pitch_rc,LPF_thrust_rc,LPF_yaw_rc;
 #define f_c 10 // Hz, cutoff frequency
 #define f_c_rc 4 // Hz, cutoff freuqency RC
 
 // TripleFilter
 TripleFilter filt1,filt2,filt3,filt4,filt5,filt6;
 
-// PID STUFF
-
+// PID
 PID_regulator pid1, pid2, pid3, pid4, pid5, pid6;
 bool stop_integration_3, stop_integration_4;
 
 // PITCH
 
-#define  Kp_w_pitch   0.0002 // PID 1,2 (stopnja B) (omega)
+#define  Kp_w_pitch   0.00033 // PID 1,2 (stopnja B) (omega)
 #define  Ki_w_pitch   0
 #define  Kd_w_pitch   8e-6
 
-#define  Kp_theta_pitch   7   // PID 3,4 (stopnja A) (stopinje)
-#define  Ki_theta_pitch   1
-#define  Kd_theta_pitch   0
+#define  Kp_theta_pitch   3.5   // PID 3,4 (stopnja A) (stopinje)
+#define  Ki_theta_pitch   3.0
+#define  Kd_theta_pitch   0.5
 
 // ROLL
 
-#define  Kp_w_roll   0.00005 // PID 1,2 (stopnja B) (omega)
+#define  Kp_w_roll   0.00033 // PID 1,2 (stopnja B) (omega)
 #define  Ki_w_roll   0
-#define  Kd_w_roll   8e-7
+#define  Kd_w_roll   8e-6
 
-#define  Kp_theta_roll   6   // PID 3,4 (stopnja A) (stopinje)
-#define  Ki_theta_roll   1
-#define  Kd_theta_roll   0
+#define  Kp_theta_roll   1.5   // PID 3,4 (stopnja A) (stopinje)
+#define  Ki_theta_roll   1.4
+#define  Kd_theta_roll   0.5
 
 // YAW
 
-#define  Kp_yaw   0.00005   // PID 6 - yaw (stopinje)
+#define  Kp_yaw   0.0001   // PID 6 - yaw (stopinje)
 #define  Ki_yaw   0.0
 #define  Kd_yaw   0.0
 
-float desired_value1,desired_value2,desired_value3,desired_value4,desired_value5,desired_value6 = 0;
-float output1,output2,output3,output4,output5,output6 = 0;
+float setpoint_1,setpoint_2,setpoint_3,setpoint_4,setpoint_5,setpoint_6 = 0;
+float out_1,out_2,out_3,out_4,out_5,out_6 = 0;
 
 // MAIN OUTPUTS
 
-#define MAX_DEGREES 15.0 // Max Degrees (Normal mode)
+#define MAX_DEGREES 30.0 // Max Degrees (Normal mode)
 #define MAX_DPS_YAW 180 // Degrees Per Second
 #define MAX_DPS_PITCH_ROLL 150 // Degrees Per Second (Acro mode)
 #define MAX_VERT_SPEED 1 // (Only Altitude hold mode)
 
 float F1m, F2m, F3m, F4m;
 int pwm_1, pwm_2, pwm_3, pwm_4;
-
 
 void setup() {
     ESC_Servo_1.attach(3);
@@ -166,7 +170,7 @@ void setup() {
     imu.setSampleRate(1000);
 
     // Set LPF
-    //imu.setLPF(98);
+    // imu.setLPF(98);
 
     // set up kalman filters
     filt1.change_parameters(Q_a, R_a, f_c, 0);
@@ -177,18 +181,18 @@ void setup() {
     filt5.change_parameters(Q_w, R_w, f_c, 0);
     filt6.change_parameters(Q_w, R_w, f_c, 0);
 
-    lpfilter_yaw_rc.change_parameters(f_c_rc,0.5);
-    lpfilter_thrust_rc.change_parameters(f_c_rc,0);
-    lpfilter_roll_rc.change_parameters(f_c_rc,0.5);
-    lpfilter_pitch_rc.change_parameters(f_c_rc,0.5);
+    LPF_yaw_rc.change_parameters(f_c_rc,0.5);
+    LPF_thrust_rc.change_parameters(f_c_rc,0);
+    LPF_roll_rc.change_parameters(f_c_rc,0.5);
+    LPF_pitch_rc.change_parameters(f_c_rc,0.5);
     
     // set up PIDs
     pid1.set_parameters(Kp_w_roll, Ki_w_roll, Kd_w_roll);
     pid2.set_parameters(Kp_w_pitch, Ki_w_pitch, Kd_w_pitch);
     pid3.set_parameters(Kp_theta_roll, Ki_theta_roll, Kd_theta_roll);
     pid4.set_parameters(Kp_theta_pitch, Ki_theta_pitch, Kd_theta_pitch);
-    //pid5.set_parameters(Kp_5, Ki_5, Kd_5);
-    //pid6.set_parameters(Kp_6, Ki_6, Kd_6);
+    // pid5.set_parameters(Kp_5, Ki_5, Kd_5);
+    pid6.set_parameters(Kp_yaw, Ki_yaw, Kd_yaw);
 
     Serial.print(F("Waiting for transmitter... "));
     while (get_rc_status() != 1) {
@@ -202,11 +206,11 @@ void setup() {
     time_start = micros();
     time_prev = time_start;
 
-    calibrate();
+    //calibrate();
 }
 
 void loop() {
-    counter += 1;
+    //counter += 1;
 
     get_imu_data();
     get_rc_data();
@@ -244,7 +248,6 @@ void loop() {
         //get_serial_commands();
         Serial.println(F(""));
     //}
-    
 }
 
 void calibrate() {
@@ -282,7 +285,7 @@ void get_time() {
     time_now = micros();
     dt = (time_now - time_prev)*1e-6;  // s
     time_prev = time_now;
-    frequency_saved = (frequency_saved + 1/dt)/2;
+    freq = (freq + 1/dt)/2;
 }
 
 void get_time_pressure() {
@@ -294,12 +297,12 @@ void get_time_pressure() {
 
 void calculate_PIDs() {
     if (remote_armed == true) {
-        if (abs(output3) > Kp_theta_roll*MAX_DEGREES*2) {
+        if (abs(out_3) > Kp_theta_roll*MAX_DEGREES*2) {
             stop_integration_3 = true;
         } else {
             stop_integration_3 = false;
         }
-        if (abs(output4) > Kp_theta_pitch*MAX_DEGREES*2) {
+        if (abs(out_4) > Kp_theta_pitch*MAX_DEGREES*2) {
             stop_integration_4 = true;
         } else {
             stop_integration_4 = false;
@@ -318,45 +321,45 @@ void calculate_PIDs() {
         if (get_flight_mode() == 1 || get_flight_mode() == 2) {
             // Normal mode or Altitude hold mode
 
-            desired_value3 = MAX_DEGREES*(roll_rc-0.5)*2;
-            desired_value4 = MAX_DEGREES*(pitch_rc-0.5)*2;
+            setpoint_3 = MAX_DEGREES*(roll_rc-0.5)*2;
+            setpoint_4 = MAX_DEGREES*(pitch_rc-0.5)*2;
             
             // PID 3 roll
-            output3 = pid3.Output(-angle_deg[0], -desired_value3, dt, stop_integration_3);
+            out_3 = pid3.Output(-angle_deg[0], -setpoint_3, dt, stop_integration_3);
             // PID 4 pitch
-            output4 = pid4.Output(angle_deg[1], desired_value4, dt, stop_integration_4);
+            out_4 = pid4.Output(angle_deg[1], setpoint_4, dt, stop_integration_4);
 
             // PID 1 omega roll
-            output1 = pid1.Output(r2d(-omega[0]), output3, dt);
+            out_1 = pid1.Output(r2d(-omega[0]), out_3, dt);
             // PID 2 omega pitch
-            output2 = pid2.Output(r2d(omega[1]), output4, dt);
+            out_2 = pid2.Output(r2d(omega[1]), out_4, dt);
 
         } else if (get_flight_mode() == 0) {
             // Acro mode
-            output3 = 0;
-            output4 = 0;
+            out_3 = 0;
+            out_4 = 0;
 
-            desired_value1 = MAX_DPS_PITCH_ROLL*(roll_rc-0.5)*2;
-            desired_value2 = MAX_DPS_PITCH_ROLL*(pitch_rc-0.5)*2;
+            setpoint_1 = MAX_DPS_PITCH_ROLL*(roll_rc-0.5)*2;
+            setpoint_2 = MAX_DPS_PITCH_ROLL*(pitch_rc-0.5)*2;
             
             // PID 1 omega roll
-            output1 = pid1.Output(r2d(-omega[0]), -desired_value1, dt);
+            out_1 = pid1.Output(r2d(-omega[0]), -setpoint_1, dt);
             // PID 2 omega pitch
-            output2 = pid2.Output(r2d(omega[1]), desired_value2, dt);
+            out_2 = pid2.Output(r2d(omega[1]), setpoint_2, dt);
 
         }
 
         if (get_flight_mode() == 0 || get_flight_mode() == 1) {
-            output5 = thrust_rc;
+            out_5 = thrust_rc;
         } else {
-            desired_value5 = MAX_VERT_SPEED*(thrust_rc-0.5)*2;
-            output5 = pid5.Output(vertical_speed,desired_value5,dt);
+            setpoint_5 = MAX_VERT_SPEED*(thrust_rc-0.5)*2;
+            out_5 = pid5.Output(vertical_speed,setpoint_5,dt);
         }
 
-        desired_value6 = MAX_DPS_YAW*(yaw_rc-0.5)*2;
+        setpoint_6 = MAX_DPS_YAW*(yaw_rc-0.5)*2;
         // PID 6 yaw (All modes)
-        output6 = pid6.Output(r2d(omega[2]), desired_value6, dt);
-        //output6 =  0.2f*(yaw_rc-0.5)*2;
+        out_6 = pid6.Output(r2d(omega[2]), setpoint_6, dt);
+        //out_6 =  0.2f*(yaw_rc-0.5)*2;
 
     } else {
         pid1.ResetOutput();
@@ -364,25 +367,25 @@ void calculate_PIDs() {
         pid3.ResetOutput();
         pid4.ResetOutput();
         pid6.ResetOutput();
-        output1 = 0;
-        output2 = 0;
-        output3 = 0;
-        output4 = 0;
-        output6 = 0;
+        out_1 = 0;
+        out_2 = 0;
+        out_3 = 0;
+        out_4 = 0;
+        out_6 = 0;
     }
 }
 
 void apply_pid_to_pwm() {
 
-    F1m = (-output1-output2);  // Force magnitude
-    F2m = (+output1-output2);
-    F3m = (-output1+output2);
-    F4m = (+output1+output2);
+    F1m = (-out_1-out_2);  // Force magnitude
+    F2m = (+out_1-out_2);
+    F3m = (-out_1+out_2);
+    F4m = (+out_1+out_2);
 
-    F1m += (+output5 -output6);  // Force magnitude
-    F2m += (+output5 +output6);
-    F3m += (+output5 +output6);
-    F4m += (+output5 -output6);
+    F1m += (+out_5 +out_6);  // Force magnitude
+    F2m += (+out_5 -out_6);
+    F3m += (+out_5 -out_6);
+    F4m += (+out_5 +out_6);
 
     if (F1m < 0) {F1m = 0;}
     if (F2m < 0) {F2m = 0;}
@@ -476,10 +479,10 @@ void get_rc_data() {
         channel_norm[channel] = ((float)value_channel - 1000)/1000; // TODO: this line eats up 400 ms of time....
     }
 
-    roll_rc = lpfilter_roll_rc.Output(channel_norm[0],dt);
-    pitch_rc = lpfilter_pitch_rc.Output(channel_norm[1],dt);
-    thrust_rc = lpfilter_thrust_rc.Output(channel_norm[2],dt);
-    yaw_rc = lpfilter_yaw_rc.Output(channel_norm[3],dt);
+    roll_rc = LPF_roll_rc.Output(channel_norm[0],dt);
+    pitch_rc = LPF_pitch_rc.Output(channel_norm[1],dt);
+    thrust_rc = LPF_thrust_rc.Output(channel_norm[2],dt);
+    yaw_rc = LPF_yaw_rc.Output(channel_norm[3],dt);
 
     remote_status = get_rc_status();
 
@@ -689,29 +692,21 @@ void print_offsets() {
     Serial.println(",\n");
 }
 
-void print_desired_values() {
-    Serial.print(F("desired_roll:"));
-    Serial.print(desired_value3);
-    Serial.print(F(",desired_pitch:"));
-    Serial.print(desired_value4);
-    delimiter();
-}
-
 void print_pid_data() {
     Serial.print(F("pid1:"));
-    Serial.print(output1);
+    Serial.print(out_1);
     Serial.print(F(",pid2:"));
-    Serial.print(output2);
+    Serial.print(out_2);
     Serial.print(F(",pid3:"));
-    Serial.print(output3);
+    Serial.print(out_3);
     Serial.print(F(",pid4:"));
-    Serial.print(output4);
+    Serial.print(out_4);
     Serial.print(F(",pid5:"));
-    Serial.print(output5);
+    Serial.print(out_5);
     Serial.print(F(",desired3:"));
-    Serial.print(desired_value3);
+    Serial.print(setpoint_3);
     Serial.print(F(",desired4:"));
-    Serial.print(desired_value4);
+    Serial.print(setpoint_4);
     delimiter();
 }
 
