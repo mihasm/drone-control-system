@@ -1,48 +1,63 @@
-#include <Arduino.h>
+//#include <Arduino.h>
 #include <PPMReader.h>
 #include <PID_regulator.h>
 #include <Servo.h>
-#include <SparkFunMPU9250-DMP.h>
+//#include <SparkFunMPU9250-DMP.h>
 #include <TripleFilter.h>
+#include <BMP280_DEV.h>
 
 const char comma[] PROGMEM = {","};
 
+// BMP280
+BMP280_DEV bmp280;
+float pressure, temperature, altitude, altitude_prev, vertical_speed_BMP;
 // MPU9255
+#include <Wire.h>
 
-MPU9250_DMP imu;
-int status_IMU;
+#define MPU9250_ADDRESS 0x68
+#define MAG_ADDRESS 0x0C
+#define GYRO_FULL_SCALE_250_DPS 0x00 
+#define GYRO_FULL_SCALE_500_DPS 0x08
+#define GYRO_FULL_SCALE_1000_DPS 0x10
+#define GYRO_FULL_SCALE_2000_DPS 0x18
+#define ACC_FULL_SCALE_2_G 0x00 
+#define ACC_FULL_SCALE_4_G 0x08
+#define ACC_FULL_SCALE_8_G 0x10
+#define ACC_FULL_SCALE_16_G 0x18
+
+#define GYRO_RANGE 500/32768*0.01745329251994 // rad/s
+#define ACC_RANGE 8/32768*9.82 // m/s^2
+
+volatile bool intFlag=false;
+
+int16_t ax,ay,az,gx,gy,gz,mx,my,mz;
 
 // Servo stuff
-
 Servo ESC_Servo_1, ESC_Servo_2, ESC_Servo_3, ESC_Servo_4;
-int data1, data2, data3, data4;
 
 // RC stuff
-
-#define kChannelNumber 6  // Number of channels
+#define NUMCHANNELS 6  // Number of channels
 #define PIN_RECEIVER 2  // rc receiver PPM pin
 
-float channel_norm[kChannelNumber];
-PPMReader ppm(PIN_RECEIVER, kChannelNumber);
+PPMReader ppm(PIN_RECEIVER, NUMCHANNELS);
+float channel_norm[NUMCHANNELS];
 bool remote_armed = false;
 int remote_status = -2;
+int channel;
 float thrust_rc = 0;
 float pitch_rc = 0.5;
 float roll_rc = 0.5;
 float yaw_rc = 0.5;
-unsigned long value_channel;
+int value_channel;
 float last_flight_mode = -2;
 
 // time variables
 
-unsigned long time_start, time_now, time_prev;
+unsigned long time_now, time_prev;
 float dt;
 
-float freq;
+int freq;
 int counter;
-
-unsigned long time_now_pres, time_prev_pres;
-float dt_pres;
 
 // set up main data arrays
 float acceleration[3];  // m/s^2
@@ -50,36 +65,26 @@ float omega[3];  // rad/s
 float omega_prime_z;
 float omega_prev_z;
 
-// filtered
-float acceleration_f[3];  // m/s^2
-float omega_f[3];  // rad/s
-
-
 float angle_acc[2];  // rads
 float angle[3];  // rads
 float angle_deg[3];  // degs
-
-float speed[3] = {0.0f, 0.0f, 0.0f};  // m/s
 
 float vertical_acceleration_imu;
 float vertical_speed;
 float vertical_speed_imu;
 
-float offset_acceleration[3] = {-2.26409196f, -8.57940292f, 1.87048921f};
-float offset_omega[3] = {0.04300289f, 0.02534661f, -0.00732187f};
+float offset_acceleration[3] = {-1.95823688,-9.10327243,1.81496248};
+float offset_omega[3] = {0.04716399,0.01246891,0.02355237};
 
 // Omega filter
-
 #define  Q_w   0.5   // Process noise (wind/driver input)
 #define  R_w   0.05   // sensor inaccuracy. more = more innacurate
 
 // Acceleration filter
-
 #define  Q_a   0.5   // Process noise (wind/driver input)
 #define  R_a   0.05   // sensor inaccuracy. more = more innacurate
 
 // LPF
-
 LPF LPF_roll_rc,LPF_pitch_rc,LPF_thrust_rc,LPF_yaw_rc;
 #define f_c 100 // Hz, cutoff frequency
 #define f_c_rc 4 // Hz, cutoff freuqency RC
@@ -92,27 +97,24 @@ PID_regulator pid1, pid2, pid3, pid4, pid5, pid6, pid7;
 bool stop_integration_3, stop_integration_4;
 
 // PITCH
-
-#define  Kp_w_pitch   0.00025 // PID 1,2 (stopnja B) (omega)
+#define  Kp_w_pitch   0.00033 // PID 1,2 (stopnja B) (omega)
 #define  Ki_w_pitch   0.0
 #define  Kd_w_pitch   0.000005
 
-#define  Kp_theta_pitch   4.0   // PID 3,4 (stopnja A) (stopinje)
+#define  Kp_theta_pitch   5.0   // PID 3,4 (stopnja A) (stopinje)
 #define  Ki_theta_pitch   3.5
 #define  Kd_theta_pitch   0.05
 
 // ROLL
-
-#define  Kp_w_roll   0.00025 // PID 1,2 (stopnja B) (omega)
+#define  Kp_w_roll   0.00033 // PID 1,2 (stopnja B) (omega)
 #define  Ki_w_roll   0.0
 #define  Kd_w_roll   0.000005
 
-#define  Kp_theta_roll   4.0   // PID 3,4 (stopnja A) (stopinje)
+#define  Kp_theta_roll   5.0   // PID 3,4 (stopnja A) (stopinje)
 #define  Ki_theta_roll   3.5
 #define  Kd_theta_roll   0.05
 
 // YAW
-
 #define  Kp_w_yaw   5   // PID 6 - yaw (omega)
 #define  Ki_w_yaw   0
 #define  Kd_w_yaw   0
@@ -126,10 +128,12 @@ float out_1,out_2,out_3,out_4,out_5,out_6, out_7 = 0;
 
 // MAIN OUTPUTS
 
-#define MAX_DEGREES 30.0 // Max Degrees (Normal mode)
-#define MAX_DPS_YAW 30.0 // Degrees Per Second
-#define MAX_DPS_PITCH_ROLL 30 // Degrees Per Second (Acro mode)
+#define MAX_DEGREES 30 // Max Degrees (Normal mode)
+#define MAX_DPS_YAW 180 // Degrees Per Second
+#define MAX_DPS_PITCH_ROLL 180 // Degrees Per Second (Acro mode)
 #define MAX_VERT_SPEED 1 // (Only Altitude hold mode)
+
+#define R2DCONST 57.29578
 
 float F1m, F2m, F3m, F4m;
 int pwm_1, pwm_2, pwm_3, pwm_4;
@@ -154,29 +158,18 @@ void setup() {
     //float voltage = sensorValue * (5.0/1023.0) * 3.518816f;
 
     // IMU
-    delay(1000);
-
-    if (imu.begin() != INV_SUCCESS)
-    {
-        while (1)
-        {
-            // Failed to initialize MPU-9250, loop forever
-        }
-    }
-    Serial.println("success...");
-
-    imu.setSensors(INV_XYZ_GYRO | INV_XYZ_ACCEL); // Enable all sensors
-
-    // Gyro options are +/- 250, 500, 1000, or 2000 dps
-    imu.setGyroFSR(500); // Set gyro to 2000 dps
-    // Accel options are +/- 2, 4, 8, or 16 g
-    imu.setAccelFSR(4); // Set accel to +/-2g
-
-    // Sample rate of the accel/gyro (4Hz to 1kHz)
-    imu.setSampleRate(1000);
-
-    // Set LPF
-    // imu.setLPF(98);
+    // Set accelerometers low pass filter at 5Hz
+    I2CwriteByte(MPU9250_ADDRESS,29,0x06);
+    // Set gyroscope low pass filter at 5Hz
+    I2CwriteByte(MPU9250_ADDRESS,26,0x06);
+    // Configure gyroscope range
+    I2CwriteByte(MPU9250_ADDRESS,27,GYRO_FULL_SCALE_500_DPS);
+    // Configure accelerometers range
+    I2CwriteByte(MPU9250_ADDRESS,28,ACC_FULL_SCALE_8_G);
+    // Set by pass mode for the magnetometers
+    I2CwriteByte(MPU9250_ADDRESS,0x37,0x02);
+    // Request continuous magnetometer measurements in 16 bits
+    I2CwriteByte(MAG_ADDRESS,0x0A,0x16);
 
     // set up kalman filters
     filt1.change_parameters(Q_a, R_a, f_c, 0);
@@ -201,8 +194,17 @@ void setup() {
     pid6.set_parameters(Kp_w_yaw, Ki_w_yaw, Kd_w_yaw);
     pid7.set_parameters(Kp_wp_yaw, Ki_wp_yaw, Kd_wp_yaw);
 
+    // BMP280 Barometer
+    if (!bmp280.begin(BMP280_I2C_ALT_ADDR)) {
+        while (1) {};
+    }
+    bmp280.setPresOversampling(OVERSAMPLING_X1);    // Set the pressure oversampling to X4
+    bmp280.setTempOversampling(OVERSAMPLING_SKIP);    // Set the temperature oversampling to X1
+    bmp280.setIIRFilter(IIR_FILTER_OFF);              // Set the IIR filter to setting 4
+    bmp280.setTimeStandby(TIME_STANDBY_05MS);     // Set the standby time to 2 seconds
+    bmp280.startNormalConversion();                 // Start BMP280 continuous conversion in NORMAL_MODE
+
     //calibrate();
-    /*
     Serial.print(F("Waiting for transmitter... "));
     while (get_rc_status() != 1) {
         Serial.print(F(" "));
@@ -211,20 +213,19 @@ void setup() {
         delay(100);
     }
     Serial.print(F("Transmitter detected, starting loop!\n"));
-    */
-    
-    time_start = micros();
-    time_prev = time_start;
+
+    time_prev = micros();
 }
 
 void loop() {
-    //counter += 1;
+    counter += 1;
 
     get_imu_data();
+    get_pressure_data();
     get_rc_data();
+    calculate_vertical_speed();
     calculate_PIDs();
     get_time();
-
     apply_pid_to_pwm();
 
     if (remote_armed) {
@@ -236,56 +237,58 @@ void loop() {
         ESC_Servo_4.writeMicroseconds(1000);
     }
     
-    
-    //if (counter > 500) {
-        //counter = 0;
-        //print_dt();
-        print_frequency();
-        //print_rc_data();
-        //print_processed_rc_data();
-        print_angle_deg();
-        //print_microseconds_data();
-        //print_omega_data(); // raw rot. velocity
-        //print_acc_data(); // raw acceleration
-        //print_propeller_thrust_data();
-        //print_pwm_data();
-        //print_pid_data();
-        //print_setpoints();
-        //print_raw_acc_data();
-        //print_pressure_data();
-        //print_angle_rad();
-        //print_vertical_speed();
-        //get_serial_commands();
-        Serial.println(F(""));
-    //}
+    //print_stuff();
+    if (counter > 500) {
+        counter = 0;
+        print_stuff();
+    }
+}
+
+void print_stuff() {
+    //print_dt();
+    print_frequency();
+    //print_rc_data();
+    //print_processed_rc_data();
+    //print_angle_deg();
+    //print_microseconds_data();
+    //print_omega_data(); // raw rot. velocity
+    //print_acc_raw();
+    //print_acc_data(); // raw acceleration
+    //print_propeller_thrust_data();
+    print_pwm_data();
+    //print_pid_data();
+    //print_setpoints();
+    //print_raw_acc_data();
+    //print_pressure_data();
+    //print_angle_rad();
+    //print_vertical_speed();
+    //get_serial_commands();
+    Serial.println(F(""));
 }
 
 void calibrate() {
-    Serial.println("Calibrating");
-    offset_omega[0] = -imu.calcGyro(imu.gy)*0.0174533;
-    offset_omega[1] = imu.calcGyro(imu.gx)*0.0174533;
-    offset_omega[2] = imu.calcGyro(imu.gz)*0.0174533;
+    get_imu_data_raw();
+    offset_omega[0] = omega[0];
+    offset_omega[1] = omega[1];
+    offset_omega[2] = omega[2];
 
-    offset_acceleration[0] = imu.calcAccel(imu.ay)*9.81;
-    offset_acceleration[1] = imu.calcAccel(imu.ax)*9.81;
-    offset_acceleration[2] = 9.81 - imu.calcAccel(imu.az)*9.81;
+    offset_acceleration[0] = acceleration[0];
+    offset_acceleration[1] = acceleration[1];
+    offset_acceleration[2] = 9.82+acceleration[2];
 
     int num_iters = 1500;
 
     for (int i=0; i<num_iters; i++) {
-        while (imu.dataReady() != 1) {
-            delay(1);
-        }
-        imu.update(UPDATE_ACCEL | UPDATE_GYRO);
+        get_imu_data_raw();
 
-        offset_omega[0] = (-imu.calcGyro(imu.gy)*0.0174533+offset_omega[0]);
-        offset_omega[1] = (imu.calcGyro(imu.gx)*0.0174533+offset_omega[1]);
-        offset_omega[2] = (imu.calcGyro(imu.gz)*0.0174533+offset_omega[2]);
+        offset_omega[0] = omega[0]+offset_omega[0];
+        offset_omega[1] = omega[1]+offset_omega[1];
+        offset_omega[2] = omega[2]+offset_omega[2];
 
-        offset_acceleration[0] = (imu.calcAccel(imu.ay)*9.81+offset_acceleration[0]);
-        offset_acceleration[1] = (imu.calcAccel(imu.ax)*9.81+offset_acceleration[1]);
-        offset_acceleration[2] = (9.81 - imu.calcAccel(imu.az)*9.81+offset_acceleration[2]);
-        Serial.print(".");
+        offset_acceleration[0] = acceleration[0]+offset_acceleration[0];
+        offset_acceleration[1] = acceleration[1]+offset_acceleration[1];
+        offset_acceleration[2] = 9.82+acceleration[2]+offset_acceleration[2];
+        Serial.print(F("."));
     }
 
     offset_omega[0] = offset_omega[0]/num_iters;
@@ -296,7 +299,7 @@ void calibrate() {
     offset_acceleration[1] = offset_acceleration[1]/num_iters;
     offset_acceleration[2] = offset_acceleration[2]/num_iters;
 
-    Serial.println("Calibrated!");
+    Serial.println(F("Calibrated!"));
 
     print_offsets();
 }
@@ -310,13 +313,7 @@ void get_time() {
     time_now = micros();
     dt = (time_now - time_prev)*1e-6;  // s
     time_prev = time_now;
-    freq = (freq + 1/dt)/2;
-}
-
-void get_time_pressure() {
-    time_now_pres = micros();
-    dt_pres = (micros() - time_prev_pres)*1e-6;  // s
-    time_prev_pres = time_now_pres;
+    freq = 1/dt;
 }
 
 
@@ -346,7 +343,6 @@ void calculate_PIDs() {
         
         if (get_flight_mode() == 1 || get_flight_mode() == 2) {
             // Normal mode or Altitude hold mode
-
             setpoint_3 = MAX_DEGREES*(roll_rc-0.5)*2;
             setpoint_4 = MAX_DEGREES*(pitch_rc-0.5)*2;
             
@@ -436,29 +432,55 @@ void apply_pid_to_pwm() {
     pwm_4 = static_cast<int>(F4m*255 + 0.5);
 }
 
+
+void get_imu_data_raw() {
+    // Read accelerometer and gyroscope
+    uint8_t Buf[14];
+    I2Cread(MPU9250_ADDRESS,0x3B,14,Buf);
+
+    // Accelerometer
+    ax=Buf[0]<<8 | Buf[1];
+    ay=Buf[2]<<8 | Buf[3];
+    az=Buf[4]<<8 | Buf[5];
+    
+    // Gyroscope
+    gx=Buf[8]<<8  | Buf[9];
+    gy=Buf[10]<<8 | Buf[11];
+    gz=Buf[12]<<8 | Buf[13];
+
+    // magnetometer
+    uint8_t ST1;
+    I2Cread(MAG_ADDRESS,0x02,1,&ST1);
+
+    // Read magnetometer data 
+    uint8_t Mag[7];
+    I2Cread(MAG_ADDRESS,0x03,7,Mag);
+    // Magnetometer
+    mx=-(Mag[3]<<8 | Mag[2]);
+    my=-(Mag[1]<<8 | Mag[0]);
+    mz=-(Mag[5]<<8 | Mag[4]);
+
+    omega[0] = -(float)gy*GYRO_RANGE;
+    omega[1] = (float)gx*GYRO_RANGE;
+    omega[2] = (float)gz*GYRO_RANGE;
+
+    acceleration[0] = (float)ay*ACC_RANGE;
+    acceleration[1] = (float)ax*ACC_RANGE;
+    acceleration[2] = -(float)az*ACC_RANGE;
+}
+
 void get_imu_data() {
-    imu.update(UPDATE_ACCEL | UPDATE_GYRO);
-
-    omega[0] = -imu.calcGyro(imu.gy)*0.0174533;
-    omega[1] = imu.calcGyro(imu.gx)*0.0174533;
-    omega[2] = imu.calcGyro(imu.gz)*0.0174533;
-
-    acceleration[0] = imu.calcAccel(imu.ay)*9.81;
-    acceleration[1] = imu.calcAccel(imu.ax)*9.81;
-    acceleration[2] = -imu.calcAccel(imu.az)*9.81;
+    get_imu_data_raw();
 
     //subtract offset
-    omega[0] = omega[0]- offset_omega[0];
-    omega[1] = omega[1]- offset_omega[1];
-    omega[2] = omega[2]- offset_omega[2];
+    omega[0] = omega[0] - offset_omega[0];
+    omega[1] = omega[1] - offset_omega[1];
+    omega[2] = omega[2] - offset_omega[2];
 
     //subtract acc
-    acceleration[0] = acceleration[0]- offset_acceleration[0];
-    acceleration[1] = acceleration[1]- offset_acceleration[1];
-    acceleration[2] = acceleration[2]- offset_acceleration[2];
-
-    //print_acc_data();
-    //print_omega_data();
+    acceleration[0] = acceleration[0] - offset_acceleration[0];
+    acceleration[1] = acceleration[1] - offset_acceleration[1];
+    acceleration[2] = acceleration[2] - offset_acceleration[2];
 
     // APPLY FILT
     acceleration[0] = filt1.Output(acceleration[0],dt);
@@ -473,9 +495,6 @@ void get_imu_data() {
     omega_prime_z = derivative(omega[2],omega_prev_z,dt);
     omega_prev_z = omega[2];
 
-    //print_acc_data_filter();
-    //print_omega_data_filter();
-
     angle_acc[0] = atan2(acceleration[1], sqrt(acceleration[2] * acceleration[2] + acceleration[0] * acceleration[0]));
     angle_acc[1] = atan2(acceleration[0], sqrt(acceleration[2] * acceleration[2] + acceleration[1] * acceleration[1]));
 
@@ -486,30 +505,34 @@ void get_imu_data() {
     angle_deg[0] = wrap(r2d(angle[0]));
     angle_deg[1] = wrap(r2d(angle[1]));
     angle_deg[2] = wrap(r2d(angle[2]));
-
-    //vertical_acceleration_imu =  -(acceleration[2]*cos(angle[0])*cos(angle[1]) - acceleration[0]*sin(angle[1]) - acceleration[1]*cos(angle[1])*sin(angle[0])+9.82f);
-    //vertical_speed_imu = (0.4f*vertical_speed+0.6f*vertical_speed_imu) + vertical_acceleration_imu*dt;
-    //vertical_speed = 0.05f*vertical_speed_BMP+0.95f*vertical_speed_imu;
-    
 }
 
-void apply_pwm_to_propellers() {
-    data1 = map(pwm_1, 0, 256, 1000, 2000);
-    data2 = map(pwm_2, 0, 256, 1000, 2000);
-    data3 = map(pwm_3, 0, 256, 1000, 2000);
-    data4 = map(pwm_4, 0, 256, 1000, 2000);
 
-    ESC_Servo_1.writeMicroseconds(data1);
-    ESC_Servo_2.writeMicroseconds(data2);
-    ESC_Servo_3.writeMicroseconds(data3);
-    ESC_Servo_4.writeMicroseconds(data4);
+void calculate_vertical_speed() {
+    vertical_acceleration_imu =  -(acceleration[2]*cos(angle[0])*cos(angle[1]) - acceleration[0]*sin(angle[1]) - acceleration[1]*cos(angle[1])*sin(angle[0])+9.82);
+    vertical_speed_imu = vertical_speed_imu + vertical_acceleration_imu*dt;
+    vertical_speed = 0.05*vertical_speed_BMP+0.95*vertical_speed_imu;
+}
+
+void get_pressure_data() {
+    bmp280.getCurrentMeasurements(temperature, pressure, altitude);
+    vertical_speed_BMP = (altitude - altitude_prev)/dt; // m/s
+    altitude_prev = altitude;
+}
+
+
+void apply_pwm_to_propellers() {
+    ESC_Servo_1.writeMicroseconds(map(pwm_1, 0, 256, 1000, 2000));
+    ESC_Servo_2.writeMicroseconds(map(pwm_2, 0, 256, 1000, 2000));
+    ESC_Servo_3.writeMicroseconds(map(pwm_3, 0, 256, 1000, 2000));
+    ESC_Servo_4.writeMicroseconds(map(pwm_4, 0, 256, 1000, 2000));
 }
 
 
 void get_rc_data() {
-    for (int channel = 0; channel < kChannelNumber; channel++) {
+    for (channel = 0; channel < NUMCHANNELS; channel++) {
         value_channel = ppm.latestValidChannelValue(channel+1,0);
-        channel_norm[channel] = ((float)value_channel - 1000)/1000; // TODO: this line eats up 400 ms of time....
+        channel_norm[channel] = (value_channel - 1000)*0.001; // TODO: this line eats up 400 ms of time....
     }
 
     roll_rc = LPF_roll_rc.Output(channel_norm[0],dt);
@@ -531,15 +554,7 @@ void get_rc_data() {
 }
 
 float r2d(float degrees) {
-    return (degrees * 57.2958f);
-}
-
-void get_serial_commands() {
-    if (Serial.available() > 0) {
-        String incoming = Serial.readString();
-        if (incoming == "reset") {
-        }
-    }
+    return (degrees * R2DCONST);
 }
 
 static float wrap(float angle) {
@@ -547,7 +562,6 @@ static float wrap(float angle) {
     while (angle < -180) angle += 360;
     return angle;
 }
-
 
 int get_rc_status() {
     if (channel_norm[4] < -0.5) {
@@ -586,20 +600,36 @@ bool flight_mode_change() {
     if (get_flight_mode() != last_flight_mode) {
         last_flight_mode = get_flight_mode();
         return 1;
+    } else {
+        last_flight_mode = get_flight_mode();
+        return 0;
     }
-    last_flight_mode = get_flight_mode();
-    return 0;
 }
 
-void print_dt() {
-    Serial.print(F("dt:"));
-    Serial.print(dt*1e3,10);
-    delimiter();
+
+void I2Cread(uint8_t Address, uint8_t Register, uint8_t Nbytes, uint8_t* Data) {
+    // Set register address
+    Wire.beginTransmission(Address);
+    Wire.write(Register);
+    Wire.endTransmission();
+    // Read Nbytes
+    Wire.requestFrom(Address, Nbytes); 
+    uint8_t index=0;
+    while (Wire.available())
+    Data[index++]=Wire.read();
+}
+
+void I2CwriteByte(uint8_t Address, uint8_t Register, uint8_t Data) {
+    // Set register address
+    Wire.beginTransmission(Address);
+    Wire.write(Register);
+    Wire.write(Data);
+    Wire.endTransmission();
 }
 
 void print_frequency() {
     Serial.print(F("f:"));
-    Serial.print(1/dt,0);
+    Serial.print(freq);
     delimiter();
 }
 
@@ -610,21 +640,31 @@ void delimiter() {
 
 void print_omega_data() {
     Serial.print(F("OmgX:"));
-    Serial.print(omega[0]*100,10);
+    Serial.print(omega[0]);
     Serial.print(F(",OmgY:"));
-    Serial.print(omega[1]*100,10);
+    Serial.print(omega[1]);
     Serial.print(F(",OmgZ:"));
-    Serial.print(omega[2]*100,10);
+    Serial.print(omega[2]);
     delimiter();
 }
 
 void print_omega_data_filter() {
     Serial.print(F("OmgX_f:"));
-    Serial.print(omega[0]*100,10);
+    Serial.print(omega[0]);
     Serial.print(F(",OmgY_f:"));
-    Serial.print(omega[1]*100,10);
+    Serial.print(omega[1]);
     Serial.print(F(",OmgZ_f:"));
-    Serial.print(omega[2]*100,10);
+    Serial.print(omega[2]);
+    delimiter();
+}
+
+void print_acc_raw() {
+    Serial.print(F("ax:"));
+    Serial.print(ax);
+    Serial.print(F(",ay:"));
+    Serial.print(ay);
+    Serial.print(F(",az:"));
+    Serial.print(az);
     delimiter();
 }
 
@@ -653,7 +693,7 @@ void print_acc_data_filter() {
 }
 
 void print_rc_data() {
-    for (int i = 0; i < (kChannelNumber); i++) {
+    for (int i = 0; i < (NUMCHANNELS); i++) {
         Serial.print(F("RC"));
         Serial.print(i+1);
         Serial.print(F(":"));
@@ -697,18 +737,6 @@ void print_pwm_data() {
     delimiter();
 }
 
-void print_microseconds_data() {
-    Serial.print(F("data1:"));
-    Serial.print(data1);
-    Serial.print(F(",data2:"));
-    Serial.print(data2);
-    Serial.print(F(",data3:"));
-    Serial.print(data3);
-    Serial.print(F(",data4:"));
-    Serial.print(data4);
-    delimiter();
-}
-
 void print_propeller_thrust_data() {
     Serial.print(F("F1m:"));
     Serial.print(F1m);
@@ -729,14 +757,14 @@ void print_offsets() {
     delimiter();
     Serial.print(offset_acceleration[2],8);
     delimiter();
-
+    Serial.println(F(""));
     Serial.println(F("Offsets omega:"));
     Serial.print(offset_omega[0],8);
     delimiter();
     Serial.print(offset_omega[1],8);
     delimiter();
     Serial.print(offset_omega[2],8);
-    Serial.println(",\n");
+    Serial.println(F(",\n"));
 }
 
 void print_pid_data() {
@@ -774,6 +802,27 @@ void print_processed_rc_data() {
     Serial.print(thrust_rc,4);
     Serial.print(F(",yaw:"));
     Serial.print(yaw_rc,4);
-    
+    delimiter();
+}
+
+void print_pressure_data() {
+    Serial.print(F("pressure:"));
+    Serial.print(pressure,4);                    // Display the results    
+    Serial.print(F(",temperature:"));
+    Serial.print(temperature,4);    
+    Serial.print(F(",altitude:"));
+    Serial.print(altitude,4);
+    Serial.print(F(",altitude_prev:"));
+    Serial.print(altitude_prev,4);
+    delimiter();
+}
+
+void print_vertical_speed() {
+    Serial.print(F("vertical_speed_BMP:"));
+    Serial.print(vertical_speed_BMP);                    // Display the results    
+    Serial.print(F(",vertical_speed_imu:"));
+    Serial.print(vertical_speed_imu);    
+    Serial.print(F(",vertical_speed:"));
+    Serial.print(vertical_speed);
     delimiter();
 }
