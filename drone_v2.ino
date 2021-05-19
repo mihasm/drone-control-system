@@ -47,6 +47,8 @@ float dt_pres;
 // set up main data arrays
 float acceleration[3];  // m/s^2
 float omega[3];  // rad/s
+float omega_prime_z;
+float omega_prev_z;
 
 // filtered
 float acceleration_f[3];  // m/s^2
@@ -63,66 +65,70 @@ float vertical_acceleration_imu;
 float vertical_speed;
 float vertical_speed_imu;
 
-float offset_acceleration[3] = {-2.35f, -8.75f, 1.98f};
-float offset_omega[3] = {0.04f, 0.02f, 0.01f};
+float offset_acceleration[3] = {-2.26409196f, -8.57940292f, 1.87048921f};
+float offset_omega[3] = {0.04300289f, 0.02534661f, -0.00732187f};
 
 // Omega filter
 
 #define  Q_w   0.5   // Process noise (wind/driver input)
-#define  R_w   0.5   // sensor inaccuracy. more = more innacurate
+#define  R_w   0.05   // sensor inaccuracy. more = more innacurate
 
 // Acceleration filter
 
 #define  Q_a   0.5   // Process noise (wind/driver input)
-#define  R_a   0.5   // sensor inaccuracy. more = more innacurate
+#define  R_a   0.05   // sensor inaccuracy. more = more innacurate
 
 // LPF
 
 LPF LPF_roll_rc,LPF_pitch_rc,LPF_thrust_rc,LPF_yaw_rc;
-#define f_c 10 // Hz, cutoff frequency
+#define f_c 100 // Hz, cutoff frequency
 #define f_c_rc 4 // Hz, cutoff freuqency RC
 
 // TripleFilter
 TripleFilter filt1,filt2,filt3,filt4,filt5,filt6;
 
 // PID
-PID_regulator pid1, pid2, pid3, pid4, pid5, pid6;
+PID_regulator pid1, pid2, pid3, pid4, pid5, pid6, pid7;
 bool stop_integration_3, stop_integration_4;
 
 // PITCH
 
-#define  Kp_w_pitch   0.00033 // PID 1,2 (stopnja B) (omega)
-#define  Ki_w_pitch   0
-#define  Kd_w_pitch   8e-6
+#define  Kp_w_pitch   0.00025 // PID 1,2 (stopnja B) (omega)
+#define  Ki_w_pitch   0.0
+#define  Kd_w_pitch   0.000005
 
-#define  Kp_theta_pitch   3.5   // PID 3,4 (stopnja A) (stopinje)
-#define  Ki_theta_pitch   3.0
-#define  Kd_theta_pitch   0.5
+#define  Kp_theta_pitch   4.0   // PID 3,4 (stopnja A) (stopinje)
+#define  Ki_theta_pitch   3.5
+#define  Kd_theta_pitch   0.05
 
 // ROLL
 
-#define  Kp_w_roll   0.00033 // PID 1,2 (stopnja B) (omega)
-#define  Ki_w_roll   0
-#define  Kd_w_roll   8e-6
+#define  Kp_w_roll   0.00025 // PID 1,2 (stopnja B) (omega)
+#define  Ki_w_roll   0.0
+#define  Kd_w_roll   0.000005
 
-#define  Kp_theta_roll   1.5   // PID 3,4 (stopnja A) (stopinje)
-#define  Ki_theta_roll   1.4
-#define  Kd_theta_roll   0.5
+#define  Kp_theta_roll   4.0   // PID 3,4 (stopnja A) (stopinje)
+#define  Ki_theta_roll   3.5
+#define  Kd_theta_roll   0.05
 
 // YAW
 
-#define  Kp_yaw   0.0001   // PID 6 - yaw (stopinje)
-#define  Ki_yaw   0.0
-#define  Kd_yaw   0.0
+#define  Kp_w_yaw   5   // PID 6 - yaw (omega)
+#define  Ki_w_yaw   0
+#define  Kd_w_yaw   0
 
-float setpoint_1,setpoint_2,setpoint_3,setpoint_4,setpoint_5,setpoint_6 = 0;
-float out_1,out_2,out_3,out_4,out_5,out_6 = 0;
+#define  Kp_wp_yaw   0.0003   // PID 6 - yaw (omega prime)
+#define  Ki_wp_yaw   0
+#define  Kd_wp_yaw   0
+
+float setpoint_1,setpoint_2,setpoint_3,setpoint_4,setpoint_5,setpoint_6,setpoint_7 = 0;
+float out_1,out_2,out_3,out_4,out_5,out_6, out_7 = 0;
 
 // MAIN OUTPUTS
 
 #define MAX_DEGREES 30.0 // Max Degrees (Normal mode)
-#define MAX_DPS_YAW 180 // Degrees Per Second
-#define MAX_DPS_PITCH_ROLL 150 // Degrees Per Second (Acro mode)
+#define MAX_DPS_YAW 30.0 // Degrees Per Second
+#define MAX_DPS_PITCH_ROLL 30 // Degrees Per Second (Acro mode)
 #define MAX_VERT_SPEED 1 // (Only Altitude hold mode)
 
 float F1m, F2m, F3m, F4m;
@@ -192,8 +198,11 @@ void setup() {
     pid3.set_parameters(Kp_theta_roll, Ki_theta_roll, Kd_theta_roll);
     pid4.set_parameters(Kp_theta_pitch, Ki_theta_pitch, Kd_theta_pitch);
     // pid5.set_parameters(Kp_5, Ki_5, Kd_5);
-    pid6.set_parameters(Kp_yaw, Ki_yaw, Kd_yaw);
+    pid6.set_parameters(Kp_w_yaw, Ki_w_yaw, Kd_w_yaw);
+    pid7.set_parameters(Kp_wp_yaw, Ki_wp_yaw, Kd_wp_yaw);
 
+    //calibrate();
+    /*
     Serial.print(F("Waiting for transmitter... "));
     while (get_rc_status() != 1) {
         Serial.print(F(" "));
@@ -202,11 +211,10 @@ void setup() {
         delay(100);
     }
     Serial.print(F("Transmitter detected, starting loop!\n"));
+    */
     
     time_start = micros();
     time_prev = time_start;
-
-    //calibrate();
 }
 
 void loop() {
@@ -232,15 +240,17 @@ void loop() {
     //if (counter > 500) {
         //counter = 0;
         //print_dt();
-        //print_frequency();
+        print_frequency();
         //print_rc_data();
         //print_processed_rc_data();
         print_angle_deg();
+        //print_microseconds_data();
         //print_omega_data(); // raw rot. velocity
         //print_acc_data(); // raw acceleration
         //print_propeller_thrust_data();
         //print_pwm_data();
         //print_pid_data();
+        //print_setpoints();
         //print_raw_acc_data();
         //print_pressure_data();
         //print_angle_rad();
@@ -260,24 +270,39 @@ void calibrate() {
     offset_acceleration[1] = imu.calcAccel(imu.ax)*9.81;
     offset_acceleration[2] = 9.81 - imu.calcAccel(imu.az)*9.81;
 
-    for (int i=0; i<100; i++) {
+    int num_iters = 1500;
+
+    for (int i=0; i<num_iters; i++) {
         while (imu.dataReady() != 1) {
             delay(1);
         }
         imu.update(UPDATE_ACCEL | UPDATE_GYRO);
 
-        offset_omega[0] = (-imu.calcGyro(imu.gy)*0.0174533+offset_omega[0])/2;
-        offset_omega[1] = (imu.calcGyro(imu.gx)*0.0174533+offset_omega[1])/2;
-        offset_omega[2] = (imu.calcGyro(imu.gz)*0.0174533+offset_omega[2])/2;
+        offset_omega[0] = (-imu.calcGyro(imu.gy)*0.0174533+offset_omega[0]);
+        offset_omega[1] = (imu.calcGyro(imu.gx)*0.0174533+offset_omega[1]);
+        offset_omega[2] = (imu.calcGyro(imu.gz)*0.0174533+offset_omega[2]);
 
-        offset_acceleration[0] = (imu.calcAccel(imu.ay)*9.81+offset_acceleration[0])/2;
-        offset_acceleration[1] = (imu.calcAccel(imu.ax)*9.81+offset_acceleration[1])/2;
-        offset_acceleration[2] = (9.81 - imu.calcAccel(imu.az)*9.81+offset_acceleration[2])/2;
+        offset_acceleration[0] = (imu.calcAccel(imu.ay)*9.81+offset_acceleration[0]);
+        offset_acceleration[1] = (imu.calcAccel(imu.ax)*9.81+offset_acceleration[1]);
+        offset_acceleration[2] = (9.81 - imu.calcAccel(imu.az)*9.81+offset_acceleration[2]);
         Serial.print(".");
     }
+
+    offset_omega[0] = offset_omega[0]/num_iters;
+    offset_omega[1] = offset_omega[1]/num_iters;
+    offset_omega[2] = offset_omega[2]/num_iters;
+
+    offset_acceleration[0] = offset_acceleration[0]/num_iters;
+    offset_acceleration[1] = offset_acceleration[1]/num_iters;
+    offset_acceleration[2] = offset_acceleration[2]/num_iters;
+
     Serial.println("Calibrated!");
 
     print_offsets();
+}
+
+float derivative(float prev_y, float next_y, float Ts) {
+    return (next_y-prev_y)/Ts;
 }
 
 
@@ -316,6 +341,7 @@ void calculate_PIDs() {
             pid4.ResetID();
             pid5.ResetID();
             pid6.ResetID();
+            pid7.ResetID();
         }
         
         if (get_flight_mode() == 1 || get_flight_mode() == 2) {
@@ -358,7 +384,8 @@ void calculate_PIDs() {
 
         setpoint_6 = MAX_DPS_YAW*(yaw_rc-0.5)*2;
         // PID 6 yaw (All modes)
-        out_6 = pid6.Output(r2d(omega[2]), setpoint_6, dt);
+        out_6 = pid6.Output(r2d(omega[2]), -setpoint_6, dt);
+        out_7 = pid7.Output(omega_prime_z, out_6, dt);
         //out_6 =  0.2f*(yaw_rc-0.5)*2;
 
     } else {
@@ -367,11 +394,13 @@ void calculate_PIDs() {
         pid3.ResetOutput();
         pid4.ResetOutput();
         pid6.ResetOutput();
+        pid7.ResetOutput();
         out_1 = 0;
         out_2 = 0;
         out_3 = 0;
         out_4 = 0;
         out_6 = 0;
+        out_7 = 0;
     }
 }
 
@@ -382,10 +411,10 @@ void apply_pid_to_pwm() {
     F3m = (-out_1+out_2);
     F4m = (+out_1+out_2);
 
-    F1m += (+out_5 +out_6);  // Force magnitude
-    F2m += (+out_5 -out_6);
-    F3m += (+out_5 -out_6);
-    F4m += (+out_5 +out_6);
+    F1m += (+out_5 -out_7);  // Force magnitude
+    F2m += (+out_5 +out_7);
+    F3m += (+out_5 +out_7);
+    F4m += (+out_5 -out_7);
 
     if (F1m < 0) {F1m = 0;}
     if (F2m < 0) {F2m = 0;}
@@ -439,6 +468,10 @@ void get_imu_data() {
     omega[0] = filt4.Output(omega[0],dt);
     omega[1] = filt5.Output(omega[1],dt);
     omega[2] = filt6.Output(omega[2],dt);
+
+    // Get omega prime z (yaw)
+    omega_prime_z = derivative(omega[2],omega_prev_z,dt);
+    omega_prev_z = omega[2];
 
     //print_acc_data_filter();
     //print_omega_data_filter();
@@ -605,7 +638,9 @@ void print_acc_data() {
     delimiter();
 }
 
+void print_yaw_data() {
 
+}
 
 void print_acc_data_filter() {
     Serial.print(F("aX_f:"));
@@ -662,6 +697,18 @@ void print_pwm_data() {
     delimiter();
 }
 
+void print_microseconds_data() {
+    Serial.print(F("data1:"));
+    Serial.print(data1);
+    Serial.print(F(",data2:"));
+    Serial.print(data2);
+    Serial.print(F(",data3:"));
+    Serial.print(data3);
+    Serial.print(F(",data4:"));
+    Serial.print(data4);
+    delimiter();
+}
+
 void print_propeller_thrust_data() {
     Serial.print(F("F1m:"));
     Serial.print(F1m);
@@ -676,19 +723,19 @@ void print_propeller_thrust_data() {
 
 void print_offsets() {
     Serial.println(F("Offsets:"));
-    Serial.print(offset_acceleration[0]);
+    Serial.print(offset_acceleration[0],8);
     delimiter();
-    Serial.print(offset_acceleration[1]);
+    Serial.print(offset_acceleration[1],8);
     delimiter();
-    Serial.print(offset_acceleration[2]);
+    Serial.print(offset_acceleration[2],8);
     delimiter();
 
     Serial.println(F("Offsets omega:"));
-    Serial.print(offset_omega[0]);
+    Serial.print(offset_omega[0],8);
     delimiter();
-    Serial.print(offset_omega[1]);
+    Serial.print(offset_omega[1],8);
     delimiter();
-    Serial.print(offset_omega[2]);
+    Serial.print(offset_omega[2],8);
     Serial.println(",\n");
 }
 
@@ -703,9 +750,17 @@ void print_pid_data() {
     Serial.print(out_4);
     Serial.print(F(",pid5:"));
     Serial.print(out_5);
-    Serial.print(F(",desired3:"));
+    delimiter();
+}
+
+void print_setpoints() {
+    Serial.print(F("setpoint1:"));
+    Serial.print(out_1);
+    Serial.print(F(",setpoint2:"));
+    Serial.print(out_2);
+    Serial.print(F(",setpoint3:"));
     Serial.print(setpoint_3);
-    Serial.print(F(",desired4:"));
+    Serial.print(F(",setpoint4:"));
     Serial.print(setpoint_4);
     delimiter();
 }
