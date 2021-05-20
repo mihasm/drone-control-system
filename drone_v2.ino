@@ -1,10 +1,10 @@
-//#include <Arduino.h>
 #include <PPMReader.h>
 #include <PID_regulator.h>
 #include <Servo.h>
-//#include <SparkFunMPU9250-DMP.h>
 #include <TripleFilter.h>
 #include <BMP280_DEV.h>
+
+#define DEBUGGING_MODE 0
 
 const char comma[] PROGMEM = {","};
 
@@ -55,9 +55,13 @@ float last_flight_mode = -2;
 
 unsigned long time_now, time_prev;
 float dt;
+int freq, counter;
 
-int freq;
-int counter;
+// time pressure variables
+unsigned long time_now_pressure, time_prev_pressure;
+float dt_pressure;
+
+
 
 // set up main data arrays
 float acceleration[3];  // m/s^2
@@ -89,29 +93,37 @@ LPF LPF_roll_rc,LPF_pitch_rc,LPF_thrust_rc,LPF_yaw_rc;
 #define f_c 100 // Hz, cutoff frequency
 #define f_c_rc 4 // Hz, cutoff freuqency RC
 
+LPF LPF_alt;
+#define f_c_alt 1
+
 // TripleFilter
 TripleFilter filt1,filt2,filt3,filt4,filt5,filt6;
+
+// KalmanFilter
+KalmanFilter KF_altitude;
+#define  Q_alt   0.005   // Process noise (wind/driver input)
+#define  R_alt   200   // sensor inaccuracy. more = more innacurate
 
 // PID
 PID_regulator pid1, pid2, pid3, pid4, pid5, pid6, pid7;
 bool stop_integration_3, stop_integration_4;
 
 // PITCH
-#define  Kp_w_pitch   0.00033 // PID 1,2 (stopnja B) (omega)
+#define  Kp_w_pitch   0.0003 // PID 1,2 (stopnja B) (omega)
 #define  Ki_w_pitch   0.0
-#define  Kd_w_pitch   0.000005
+#define  Kd_w_pitch   0.00001
 
-#define  Kp_theta_pitch   5.0   // PID 3,4 (stopnja A) (stopinje)
-#define  Ki_theta_pitch   3.5
-#define  Kd_theta_pitch   0.05
+#define  Kp_theta_pitch   5.5   // PID 3,4 (stopnja A) (stopinje)
+#define  Ki_theta_pitch   3.75
+#define  Kd_theta_pitch   0.0
 
 // ROLL
-#define  Kp_w_roll   0.00033 // PID 1,2 (stopnja B) (omega)
+#define  Kp_w_roll   0.00030 // PID 1,2 (stopnja B) (omega)
 #define  Ki_w_roll   0.0
-#define  Kd_w_roll   0.000005
+#define  Kd_w_roll   0.00001
 
-#define  Kp_theta_roll   5.0   // PID 3,4 (stopnja A) (stopinje)
-#define  Ki_theta_roll   3.5
+#define  Kp_theta_roll   2.5   // PID 3,4 (stopnja A) (stopinje)
+#define  Ki_theta_roll   1.75
 #define  Kd_theta_roll   0.05
 
 // YAW
@@ -123,6 +135,11 @@ bool stop_integration_3, stop_integration_4;
 #define  Ki_wp_yaw   0
 #define  Kd_wp_yaw   0
 
+// ALTITUDE
+#define  Kp_altitude   0.3   // PID ALTITUDE
+#define  Ki_altitude   0.05
+#define  Kd_altitude   0.00
+
 float setpoint_1,setpoint_2,setpoint_3,setpoint_4,setpoint_5,setpoint_6,setpoint_7 = 0;
 float out_1,out_2,out_3,out_4,out_5,out_6, out_7 = 0;
 
@@ -131,7 +148,7 @@ float out_1,out_2,out_3,out_4,out_5,out_6, out_7 = 0;
 #define MAX_DEGREES 30 // Max Degrees (Normal mode)
 #define MAX_DPS_YAW 180 // Degrees Per Second
 #define MAX_DPS_PITCH_ROLL 180 // Degrees Per Second (Acro mode)
-#define MAX_VERT_SPEED 1 // (Only Altitude hold mode)
+#define MAX_VERT_SPEED 0.5 // (Only Altitude hold mode)
 
 #define R2DCONST 57.29578
 
@@ -142,16 +159,28 @@ void setup() {
     ESC_Servo_1.attach(3);
     ESC_Servo_2.attach(5);
     ESC_Servo_3.attach(9);
-    ESC_Servo_4.attach(6);
-
-    ESC_Servo_1.write(0);
-    ESC_Servo_2.write(0);
-    ESC_Servo_3.write(0);
-    ESC_Servo_4.write(0);
-    
+    ESC_Servo_4.attach(11);
 
     Serial.begin(500000);
-    while (!Serial) {}
+
+    if (!DEBUGGING_MODE) {
+
+        Serial.print(F("Starting ESC calibration sequence...\n"));
+
+        ESC_Servo_1.write(2000);
+        ESC_Servo_2.write(2000);
+        ESC_Servo_3.write(2000);
+        ESC_Servo_4.write(2000);
+
+        delay(5000);
+
+        ESC_Servo_1.write(1000);
+        ESC_Servo_2.write(1000);
+        ESC_Servo_3.write(1000);
+        ESC_Servo_4.write(1000);
+
+        delay(5000);
+    }
     Serial.print(F("Init...\n"));
 
     //int sensorValue = analogRead(A7);
@@ -190,7 +219,7 @@ void setup() {
     pid2.set_parameters(Kp_w_pitch, Ki_w_pitch, Kd_w_pitch);
     pid3.set_parameters(Kp_theta_roll, Ki_theta_roll, Kd_theta_roll);
     pid4.set_parameters(Kp_theta_pitch, Ki_theta_pitch, Kd_theta_pitch);
-    // pid5.set_parameters(Kp_5, Ki_5, Kd_5);
+    pid5.set_parameters(Kp_altitude, Ki_altitude, Kd_altitude);
     pid6.set_parameters(Kp_w_yaw, Ki_w_yaw, Kd_w_yaw);
     pid7.set_parameters(Kp_wp_yaw, Ki_wp_yaw, Kd_wp_yaw);
 
@@ -204,22 +233,32 @@ void setup() {
     bmp280.setTimeStandby(TIME_STANDBY_05MS);     // Set the standby time to 2 seconds
     bmp280.startNormalConversion();                 // Start BMP280 continuous conversion in NORMAL_MODE
 
-    //calibrate();
-    Serial.print(F("Waiting for transmitter... "));
-    while (get_rc_status() != 1) {
-        Serial.print(F(" "));
-        Serial.print(get_rc_status());
-        get_rc_data();
-        delay(100);
+    // get initial altitude
+    for(int i = 0; i<150; i++) {
+        bmp280.getMeasurements(temperature, pressure, altitude);
+        delay(30);
     }
-    Serial.print(F("Transmitter detected, starting loop!\n"));
 
+    KF_altitude.change_parameters(Q_alt,R_alt,altitude);
+    LPF_alt.change_parameters(f_c_alt,altitude);
+    //calibrate();
+
+    if (!DEBUGGING_MODE) {
+        Serial.print(F("Waiting for transmitter... "));
+        while (get_rc_status() != 1) {
+            Serial.print(F(" "));
+            Serial.print(get_rc_status());
+            get_rc_data();
+            delay(100);
+        }
+        Serial.print(F("Transmitter detected, starting loop!\n"));
+    }
+    
     time_prev = micros();
+    time_prev_pressure = micros();
 }
 
 void loop() {
-    counter += 1;
-
     get_imu_data();
     get_pressure_data();
     get_rc_data();
@@ -237,16 +276,19 @@ void loop() {
         ESC_Servo_4.writeMicroseconds(1000);
     }
     
-    //print_stuff();
-    if (counter > 500) {
-        counter = 0;
+    if (DEBUGGING_MODE) {
+        counter += 1;
         print_stuff();
+        if (counter > 500) {
+            counter = 0;
+            //print_stuff();
+        }
     }
 }
 
 void print_stuff() {
     //print_dt();
-    print_frequency();
+    //print_frequency();
     //print_rc_data();
     //print_processed_rc_data();
     //print_angle_deg();
@@ -316,6 +358,12 @@ void get_time() {
     freq = 1/dt;
 }
 
+void get_time_pressure() {
+    time_now_pressure = micros();
+    dt_pressure = (time_now_pressure - time_prev_pressure)*1e-6;  // s
+    time_prev_pressure = time_now_pressure;
+}
+
 
 void calculate_PIDs() {
     if (remote_armed == true) {
@@ -379,6 +427,7 @@ void calculate_PIDs() {
         }
 
         setpoint_6 = MAX_DPS_YAW*(yaw_rc-0.5)*2;
+
         // PID 6 yaw (All modes)
         out_6 = pid6.Output(r2d(omega[2]), -setpoint_6, dt);
         out_7 = pid7.Output(omega_prime_z, out_6, dt);
@@ -510,22 +559,42 @@ void get_imu_data() {
 
 void calculate_vertical_speed() {
     vertical_acceleration_imu =  -(acceleration[2]*cos(angle[0])*cos(angle[1]) - acceleration[0]*sin(angle[1]) - acceleration[1]*cos(angle[1])*sin(angle[0])+9.82);
-    vertical_speed_imu = vertical_speed_imu + vertical_acceleration_imu*dt;
-    vertical_speed = 0.05*vertical_speed_BMP+0.95*vertical_speed_imu;
+    vertical_speed_imu = vertical_speed + vertical_acceleration_imu*dt;
+    vertical_speed = 0.1*vertical_speed_BMP+0.9*vertical_speed_imu;
 }
 
 void get_pressure_data() {
-    bmp280.getCurrentMeasurements(temperature, pressure, altitude);
-    vertical_speed_BMP = (altitude - altitude_prev)/dt; // m/s
-    altitude_prev = altitude;
+    if (bmp280.dataReady()) {
+        bmp280.getCurrentMeasurements(temperature,pressure,altitude);
+        get_time_pressure();
+        //Serial.print(F("f_pressure:"));
+        //Serial.print(1/dt_pressure);
+        //Serial.print(F(",alt:"));
+        //Serial.print(altitude);
+        altitude = KF_altitude.Output(altitude);
+        altitude = LPF_alt.Output(altitude,dt_pressure);
+        //Serial.print(F(",alt_f:"));
+        //Serial.print(altitude);
+        //Serial.print(F(","));
+        //Serial.println(F(""));
+        vertical_speed_BMP = (altitude - altitude_prev)/dt_pressure; // m/s
+        altitude_prev = altitude;
+    }
 }
 
 
 void apply_pwm_to_propellers() {
-    ESC_Servo_1.writeMicroseconds(map(pwm_1, 0, 256, 1000, 2000));
-    ESC_Servo_2.writeMicroseconds(map(pwm_2, 0, 256, 1000, 2000));
-    ESC_Servo_3.writeMicroseconds(map(pwm_3, 0, 256, 1000, 2000));
-    ESC_Servo_4.writeMicroseconds(map(pwm_4, 0, 256, 1000, 2000));
+    if (!DEBUGGING_MODE) {
+        ESC_Servo_1.writeMicroseconds(map(pwm_1, 0, 256, 1000, 2000));
+        ESC_Servo_2.writeMicroseconds(map(pwm_2, 0, 256, 1000, 2000));
+        ESC_Servo_3.writeMicroseconds(map(pwm_3, 0, 256, 1000, 2000));
+        ESC_Servo_4.writeMicroseconds(map(pwm_4, 0, 256, 1000, 2000));
+    } else {
+        ESC_Servo_1.writeMicroseconds(1000);
+        ESC_Servo_2.writeMicroseconds(1000);
+        ESC_Servo_3.writeMicroseconds(1000);
+        ESC_Servo_4.writeMicroseconds(1000);
+    }
 }
 
 
@@ -591,8 +660,7 @@ int get_flight_mode() {
         return 1;
     } else if (channel_norm[5] > 0.9) {
         // switch all the way back
-        return 1;
-        // currently set to 1 because there is no pressure sensor
+        return 2;
     }
 }
 
