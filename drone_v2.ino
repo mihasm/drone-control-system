@@ -109,22 +109,22 @@ PID_regulator pid1, pid2, pid3, pid4, pid5, pid6, pid7;
 bool stop_integration_3, stop_integration_4;
 
 // PITCH
-#define  Kp_w_pitch   0.0003 // PID 1,2 (stopnja B) (omega)
+#define  Kp_w_pitch   0.00022 // PID 1,2 (stopnja B) (omega)
 #define  Ki_w_pitch   0.0
-#define  Kd_w_pitch   0.00001
+#define  Kd_w_pitch   0.000009
 
 #define  Kp_theta_pitch   6.0   // PID 3,4 (stopnja A) (stopinje)
-#define  Ki_theta_pitch   2.5
-#define  Kd_theta_pitch   0.05
+#define  Ki_theta_pitch   0.05
+#define  Kd_theta_pitch   0.2
 
 // ROLL
-#define  Kp_w_roll   0.00030 // PID 1,2 (stopnja B) (omega)
+#define  Kp_w_roll   0.00022 // PID 1,2 (stopnja B) (omega)
 #define  Ki_w_roll   0.0
-#define  Kd_w_roll   0.00001
+#define  Kd_w_roll   0.000009
 
-#define  Kp_theta_roll   4.0   // PID 3,4 (stopnja A) (stopinje)
-#define  Ki_theta_roll   1.75
-#define  Kd_theta_roll   0.05
+#define  Kp_theta_roll   6.0   // PID 3,4 (stopnja A) (stopinje)
+#define  Ki_theta_roll   0.05
+#define  Kd_theta_roll   0.2
 
 // YAW
 #define  Kp_w_yaw   6   // PID 6 - yaw (omega)
