@@ -101,8 +101,8 @@ TripleFilter filt1,filt2,filt3,filt4,filt5,filt6;
 
 // KalmanFilter
 KalmanFilter KF_altitude;
-#define  Q_alt   0.005   // Process noise (wind/driver input)
-#define  R_alt   200   // sensor inaccuracy. more = more innacurate
+#define  Q_alt   0.008   // Process noise (wind/driver input)
+#define  R_alt   1e4  // sensor inaccuracy. more = more innacurate
 
 // PID
 PID_regulator pid1, pid2, pid3, pid4, pid5, pid6, pid7;
@@ -113,32 +113,32 @@ bool stop_integration_3, stop_integration_4;
 #define  Ki_w_pitch   0.0
 #define  Kd_w_pitch   0.00001
 
-#define  Kp_theta_pitch   5.5   // PID 3,4 (stopnja A) (stopinje)
-#define  Ki_theta_pitch   3.75
-#define  Kd_theta_pitch   0.0
+#define  Kp_theta_pitch   6.0   // PID 3,4 (stopnja A) (stopinje)
+#define  Ki_theta_pitch   2.5
+#define  Kd_theta_pitch   0.05
 
 // ROLL
 #define  Kp_w_roll   0.00030 // PID 1,2 (stopnja B) (omega)
 #define  Ki_w_roll   0.0
 #define  Kd_w_roll   0.00001
 
-#define  Kp_theta_roll   2.5   // PID 3,4 (stopnja A) (stopinje)
+#define  Kp_theta_roll   4.0   // PID 3,4 (stopnja A) (stopinje)
 #define  Ki_theta_roll   1.75
 #define  Kd_theta_roll   0.05
 
 // YAW
-#define  Kp_w_yaw   5   // PID 6 - yaw (omega)
-#define  Ki_w_yaw   0
+#define  Kp_w_yaw   6   // PID 6 - yaw (omega)
+#define  Ki_w_yaw   3
 #define  Kd_w_yaw   0
 
-#define  Kp_wp_yaw   0.0003   // PID 6 - yaw (omega prime)
+#define  Kp_wp_yaw   0.00028   // PID 6 - yaw (omega prime)
 #define  Ki_wp_yaw   0
 #define  Kd_wp_yaw   0
 
 // ALTITUDE
 #define  Kp_altitude   0.3   // PID ALTITUDE
-#define  Ki_altitude   0.05
-#define  Kd_altitude   0.00
+#define  Ki_altitude   0.8
+#define  Kd_altitude   0.005
 
 float setpoint_1,setpoint_2,setpoint_3,setpoint_4,setpoint_5,setpoint_6,setpoint_7 = 0;
 float out_1,out_2,out_3,out_4,out_5,out_6, out_7 = 0;
@@ -148,7 +148,7 @@ float out_1,out_2,out_3,out_4,out_5,out_6, out_7 = 0;
 #define MAX_DEGREES 30 // Max Degrees (Normal mode)
 #define MAX_DPS_YAW 180 // Degrees Per Second
 #define MAX_DPS_PITCH_ROLL 180 // Degrees Per Second (Acro mode)
-#define MAX_VERT_SPEED 0.5 // (Only Altitude hold mode)
+#define MAX_VERT_SPEED 0.25 // (Only Altitude hold mode)
 
 #define R2DCONST 57.29578
 
@@ -180,6 +180,11 @@ void setup() {
         ESC_Servo_4.write(1000);
 
         delay(5000);
+    } else {
+        ESC_Servo_1.write(0);
+        ESC_Servo_2.write(0);
+        ESC_Servo_3.write(0);
+        ESC_Servo_4.write(0);
     }
     Serial.print(F("Init...\n"));
 
@@ -228,7 +233,7 @@ void setup() {
         while (1) {};
     }
     bmp280.setPresOversampling(OVERSAMPLING_X1);    // Set the pressure oversampling to X4
-    bmp280.setTempOversampling(OVERSAMPLING_SKIP);    // Set the temperature oversampling to X1
+    bmp280.setTempOversampling(OVERSAMPLING_X1);    // Set the temperature oversampling to X1
     bmp280.setIIRFilter(IIR_FILTER_OFF);              // Set the IIR filter to setting 4
     bmp280.setTimeStandby(TIME_STANDBY_05MS);     // Set the standby time to 2 seconds
     bmp280.startNormalConversion();                 // Start BMP280 continuous conversion in NORMAL_MODE
@@ -241,6 +246,7 @@ void setup() {
 
     KF_altitude.change_parameters(Q_alt,R_alt,altitude);
     LPF_alt.change_parameters(f_c_alt,altitude);
+    altitude_prev = altitude;
     //calibrate();
 
     if (!DEBUGGING_MODE) {
@@ -297,13 +303,13 @@ void print_stuff() {
     //print_acc_raw();
     //print_acc_data(); // raw acceleration
     //print_propeller_thrust_data();
-    print_pwm_data();
+    //print_pwm_data();
     //print_pid_data();
     //print_setpoints();
     //print_raw_acc_data();
     //print_pressure_data();
     //print_angle_rad();
-    //print_vertical_speed();
+    print_vertical_speed();
     //get_serial_commands();
     Serial.println(F(""));
 }
@@ -560,7 +566,7 @@ void get_imu_data() {
 void calculate_vertical_speed() {
     vertical_acceleration_imu =  -(acceleration[2]*cos(angle[0])*cos(angle[1]) - acceleration[0]*sin(angle[1]) - acceleration[1]*cos(angle[1])*sin(angle[0])+9.82);
     vertical_speed_imu = vertical_speed + vertical_acceleration_imu*dt;
-    vertical_speed = 0.1*vertical_speed_BMP+0.9*vertical_speed_imu;
+    vertical_speed = 0.98*vertical_speed_imu+0.02*vertical_speed_BMP;
 }
 
 void get_pressure_data() {
@@ -572,7 +578,7 @@ void get_pressure_data() {
         //Serial.print(F(",alt:"));
         //Serial.print(altitude);
         altitude = KF_altitude.Output(altitude);
-        altitude = LPF_alt.Output(altitude,dt_pressure);
+        //altitude = LPF_alt.Output(altitude,dt_pressure);
         //Serial.print(F(",alt_f:"));
         //Serial.print(altitude);
         //Serial.print(F(","));
