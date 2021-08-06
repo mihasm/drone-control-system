@@ -77,16 +77,16 @@ float vertical_acceleration_imu;
 float vertical_speed;
 float vertical_speed_imu;
 
-float offset_acceleration[3] = {-1.95823688,-9.10327243,1.81496248};
-float offset_omega[3] = {0.04716399,0.01246891,0.02355237};
+float offset_acceleration[3] = {-2.12184054,-8.72099018,1.94126243};
+float offset_omega[3] = {0.04509204,0.01935469,0.01090463};
 
 // Omega filter
 #define  Q_w   0.5   // Process noise (wind/driver input)
-#define  R_w   0.05   // sensor inaccuracy. more = more innacurate
+#define  R_w   2.5e-7   // sensor inaccuracy. more = more innacurate
 
 // Acceleration filter
 #define  Q_a   0.5   // Process noise (wind/driver input)
-#define  R_a   0.05   // sensor inaccuracy. more = more innacurate
+#define  R_a   2.5e-7   // sensor inaccuracy. more = more innacurate
 
 // LPF
 LPF LPF_roll_rc,LPF_pitch_rc,LPF_thrust_rc,LPF_yaw_rc;
@@ -109,22 +109,22 @@ PID_regulator pid1, pid2, pid3, pid4, pid5, pid6, pid7;
 bool stop_integration_3, stop_integration_4;
 
 // PITCH
-#define  Kp_w_pitch   0.00022 // PID 1,2 (stopnja B) (omega)
-#define  Ki_w_pitch   0.0
-#define  Kd_w_pitch   0.000009
+#define  Kp_w_pitch   0.0003 // PID 1,2 (stopnja B) (omega)
+#define  Ki_w_pitch   0.0006
+#define  Kd_w_pitch   0.000025
 
-#define  Kp_theta_pitch   6.0   // PID 3,4 (stopnja A) (stopinje)
-#define  Ki_theta_pitch   0.05
-#define  Kd_theta_pitch   0.2
+#define  Kp_theta_pitch   5.0   // PID 3,4 (stopnja A) (stopinje)
+#define  Ki_theta_pitch   8.0
+#define  Kd_theta_pitch   0.05
 
 // ROLL
-#define  Kp_w_roll   0.00022 // PID 1,2 (stopnja B) (omega)
-#define  Ki_w_roll   0.0
-#define  Kd_w_roll   0.000009
+#define  Kp_w_roll   0.0003 // PID 1,2 (stopnja B) (omega)
+#define  Ki_w_roll   0.0006
+#define  Kd_w_roll   0.000015
 
-#define  Kp_theta_roll   6.0   // PID 3,4 (stopnja A) (stopinje)
-#define  Ki_theta_roll   0.05
-#define  Kd_theta_roll   0.2
+#define  Kp_theta_roll   5.0   // PID 3,4 (stopnja A) (stopinje)
+#define  Ki_theta_roll   8.0
+#define  Kd_theta_roll   0.05
 
 // YAW
 #define  Kp_w_yaw   6   // PID 6 - yaw (omega)
@@ -137,7 +137,7 @@ bool stop_integration_3, stop_integration_4;
 
 // ALTITUDE
 #define  Kp_altitude   0.3   // PID ALTITUDE
-#define  Ki_altitude   0.8
+#define  Ki_altitude   1.2
 #define  Kd_altitude   0.005
 
 float setpoint_1,setpoint_2,setpoint_3,setpoint_4,setpoint_5,setpoint_6,setpoint_7 = 0;
@@ -186,12 +186,14 @@ void setup() {
         ESC_Servo_3.write(0);
         ESC_Servo_4.write(0);
     }
-    Serial.print(F("Init...\n"));
+    
 
     //int sensorValue = analogRead(A7);
     //float voltage = sensorValue * (5.0/1023.0) * 3.518816f;
 
     // IMU
+    Serial.print(F("Init IMU...\n"));
+
     // Set accelerometers low pass filter at 5Hz
     I2CwriteByte(MPU9250_ADDRESS,29,0x06);
     // Set gyroscope low pass filter at 5Hz
@@ -229,8 +231,9 @@ void setup() {
     pid7.set_parameters(Kp_wp_yaw, Ki_wp_yaw, Kd_wp_yaw);
 
     // BMP280 Barometer
+    Serial.print(F("initializing BMP"));
     if (!bmp280.begin(BMP280_I2C_ALT_ADDR)) {
-        while (1) {};
+        while (!bmp280.begin(BMP280_I2C_ALT_ADDR)) {};
     }
     bmp280.setPresOversampling(OVERSAMPLING_X1);    // Set the pressure oversampling to X4
     bmp280.setTempOversampling(OVERSAMPLING_X1);    // Set the temperature oversampling to X1
@@ -247,6 +250,7 @@ void setup() {
     KF_altitude.change_parameters(Q_alt,R_alt,altitude);
     LPF_alt.change_parameters(f_c_alt,altitude);
     altitude_prev = altitude;
+    
     //calibrate();
 
     if (!DEBUGGING_MODE) {
@@ -295,7 +299,7 @@ void loop() {
 void print_stuff() {
     //print_dt();
     //print_frequency();
-    //print_rc_data();
+    print_rc_data();
     //print_processed_rc_data();
     //print_angle_deg();
     //print_microseconds_data();
@@ -309,12 +313,13 @@ void print_stuff() {
     //print_raw_acc_data();
     //print_pressure_data();
     //print_angle_rad();
-    print_vertical_speed();
+    //print_vertical_speed();
     //get_serial_commands();
     Serial.println(F(""));
 }
 
 void calibrate() {
+    Serial.println(F("Calibrated!"));
     get_imu_data_raw();
     offset_omega[0] = omega[0];
     offset_omega[1] = omega[1];
@@ -324,10 +329,12 @@ void calibrate() {
     offset_acceleration[1] = acceleration[1];
     offset_acceleration[2] = 9.82+acceleration[2];
 
-    int num_iters = 1500;
+    int num_iters = 5000;
 
     for (int i=0; i<num_iters; i++) {
         get_imu_data_raw();
+        print_acc_data();
+        print_omega_data();
 
         offset_omega[0] = omega[0]+offset_omega[0];
         offset_omega[1] = omega[1]+offset_omega[1];
@@ -336,7 +343,8 @@ void calibrate() {
         offset_acceleration[0] = acceleration[0]+offset_acceleration[0];
         offset_acceleration[1] = acceleration[1]+offset_acceleration[1];
         offset_acceleration[2] = 9.82+acceleration[2]+offset_acceleration[2];
-        Serial.print(F("."));
+        
+        Serial.println(F(""));
     }
 
     offset_omega[0] = offset_omega[0]/num_iters;
@@ -698,6 +706,7 @@ void I2CwriteByte(uint8_t Address, uint8_t Register, uint8_t Data) {
     Wire.beginTransmission(Address);
     Wire.write(Register);
     Wire.write(Data);
+    Serial.println(F("ending"));
     Wire.endTransmission();
 }
 
@@ -714,11 +723,11 @@ void delimiter() {
 
 void print_omega_data() {
     Serial.print(F("OmgX:"));
-    Serial.print(omega[0]);
+    Serial.print(omega[0],5);
     Serial.print(F(",OmgY:"));
-    Serial.print(omega[1]);
+    Serial.print(omega[1],5);
     Serial.print(F(",OmgZ:"));
-    Serial.print(omega[2]);
+    Serial.print(omega[2],5);
     delimiter();
 }
 
