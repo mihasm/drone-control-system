@@ -163,13 +163,15 @@ For detailed installation instructions, see [`dependencies.md`](dependencies.md)
 
 **CRITICAL SAFETY REQUIREMENT**: **REMOVE ALL PROPELLERS** before performing ESC calibration. ESCs that don't properly detect calibration signals may spin motors at 100% throttle.
 
-The system includes automatic ESC calibration on first boot:
+The system performs **automatic ESC calibration on EVERY boot** when `DEBUGGING_MODE` is disabled:
 1. **ENSURE NO PROPELLERS ARE ATTACHED**
 2. Power on the system
 3. Wait for "Starting ESC calibration sequence" message
-4. Move throttle to maximum position on transmitter
-5. Wait for calibration to complete (10 seconds)
+4. **System automatically sends maximum (2000μs) then minimum (1000μs) throttle signals**
+5. Wait for calibration to complete (10 seconds total)
 6. **RE-ATTACH PROPELLERS ONLY AFTER** confirming calibration worked correctly
+
+**Note**: To skip calibration for testing, set `DEBUGGING_MODE 1` in the code.
 
 ## ⚙️ Configuration
 
