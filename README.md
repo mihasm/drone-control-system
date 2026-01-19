@@ -3,6 +3,30 @@
 [![License: MIT](https://img.shields.io/badge/License-MIT-yellow.svg)](https://opensource.org/licenses/MIT)
 [![Arduino](https://img.shields.io/badge/Platform-Arduino-00979D.svg)](https://www.arduino.cc/)
 
+# ⚠️ **CRITICAL SAFETY WARNING**
+
+**This is a PROTOTYPE/RESEARCH SYSTEM - NOT PRODUCTION READY!**
+
+## 🚨 **IMMEDIATE SAFETY CONCERNS**
+
+1. **ESC Calibration Risk**: The system performs automatic ESC calibration on startup by sending maximum throttle signals. **NEVER run this code with propellers attached!** ESCs that don't properly detect the calibration sequence may interpret this as full throttle commands, causing the drone to take off uncontrollably.
+
+2. **No Safety Features**: This system lacks essential safety features found in commercial flight controllers (arming switches, failsafes, motor kill switches, etc.).
+
+3. **Research Prototype**: This code was developed for academic research and testing. It requires modification and thorough testing before use on any drone.
+
+## 🛑 **REQUIRED SAFETY PRECAUTIONS**
+
+- **REMOVE ALL PROPELLERS** before uploading or testing this code
+- **Test in a controlled environment** with emergency cutoff capabilities
+- **Modify the code** to disable `DEBUGGING_MODE 0` for initial testing
+- **Add your own safety features** before flight
+- **Test incrementally** - never fly with untested code
+
+**You assume all risks when using this code. The author is not responsible for any damage, injury, or loss.**
+
+---
+
 A complete quadcopter/drone flight control system implemented on Arduino, featuring advanced sensor fusion, PID control algorithms, and multiple flight modes. This project was developed as part of a master's thesis on UAV control systems.
 
 ## 📋 Table of Contents
@@ -134,11 +158,18 @@ For detailed installation instructions, see [`dependencies.md`](dependencies.md)
 4. For debugging: `pio run -t upload --environment debug`
 
 ### 4. ESC Calibration
+
+> 🚨 **DANGER**: ESC calibration sends maximum throttle signals that can cause motors to spin at full speed!
+
+**CRITICAL SAFETY REQUIREMENT**: **REMOVE ALL PROPELLERS** before performing ESC calibration. ESCs that don't properly detect calibration signals may spin motors at 100% throttle.
+
 The system includes automatic ESC calibration on first boot:
-1. Power on the system
-2. Wait for "Starting ESC calibration sequence" message
-3. Move throttle to maximum position on transmitter
-4. Wait for calibration to complete (10 seconds)
+1. **ENSURE NO PROPELLERS ARE ATTACHED**
+2. Power on the system
+3. Wait for "Starting ESC calibration sequence" message
+4. Move throttle to maximum position on transmitter
+5. Wait for calibration to complete (10 seconds)
+6. **RE-ATTACH PROPELLERS ONLY AFTER** confirming calibration worked correctly
 
 ## ⚙️ Configuration
 
@@ -341,4 +372,13 @@ If you use this code in your research or project, please cite the original maste
 
 ---
 
-**⚠️ Safety Warning**: This is experimental software for unmanned aerial vehicles. Always fly in designated areas, maintain visual contact, and be prepared for loss of control. The authors are not responsible for any damage or injury caused by the use of this software.
+# 🚨 **FINAL SAFETY WARNING**
+
+**This is a PROTOTYPE RESEARCH SYSTEM - NOT A COMMERCIAL FLIGHT CONTROLLER!**
+
+- **No Commercial Guarantees**: This code lacks the safety features and testing of production flight controllers
+- **Research Use Only**: Developed for academic purposes and requires significant modification for safe operation
+- **Your Responsibility**: You are solely responsible for ensuring safe operation when using this code
+- **No Liability**: The author assumes no responsibility for any damage, injury, or loss resulting from use of this software
+
+**Always fly in designated areas, maintain visual contact, and be prepared for immediate emergency cutoff. Never fly over people or property.**
