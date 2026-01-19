@@ -1,10 +1,30 @@
+/*
+ * Drone Control System v2.0
+ *
+ * A complete quadcopter flight control system for Arduino featuring:
+ * - IMU sensor fusion (MPU-9255)
+ * - Barometric altitude control (BMP280)
+ * - Cascaded PID control for stability
+ * - Multiple flight modes (Acro, Normal, Altitude Hold)
+ * - PPM RC receiver support
+ *
+ * Hardware: Arduino Mega 2560 recommended
+ * Sensors: MPU-9255 IMU + BMP280 barometer
+ * RC: PPM receiver with 6+ channels
+ *
+ * Author: Miha Smrekar
+ * License: MIT
+ * Repository: https://github.com/username/drone-control-arduino
+ */
+
 #include <PPMReader.h>
 #include <PID_regulator.h>
 #include <Servo.h>
 #include <TripleFilter.h>
 #include <BMP280_DEV.h>
 
-#define DEBUGGING_MODE 0
+// Configuration flags
+#define DEBUGGING_MODE 0  // Set to 1 for debugging output
 
 const char comma[] PROGMEM = {","};
 
